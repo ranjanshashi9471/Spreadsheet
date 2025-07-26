@@ -1,0 +1,1042 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HTML/JS Spreadsheet with SQL.js & Infinite Scroll</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Inter font -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        /* Fixed height for rows and width for columns */
+        :root {
+            --row-height: 36px;
+            --col-width: 80px;
+            --header-col-width: 48px;
+            /* Width for the row number header column */
+        }
+
+        .spreadsheet-viewport {
+            height: calc(var(--row-height) * 15);
+            /* Show 15 rows initially */
+            width: calc(var(--col-width) * 8 + var(--header-col-width));
+            /* Show 8 cols + header */
+            overflow: auto;
+            position: relative;
+            /* For sticky headers */
+            border: 1px solid #cbd5e1;
+            /* gray-300 */
+            border-radius: 0.5rem;
+            /* rounded-lg */
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            /* shadow-lg */
+        }
+
+        .spreadsheet-table {
+            border-collapse: collapse;
+            table-layout: fixed;
+            /* Fix column widths */
+            width: 100%;
+            /* Will be dynamically adjusted by padding */
+            height: 100%;
+            /* Will be dynamically adjusted by padding */
+            position: relative;
+            /* For absolutely positioning tbody */
+        }
+
+        .spreadsheet-table thead {
+            position: sticky;
+            top: 0;
+            z-index: 20;
+            background-color: #cbd5e1;
+            /* gray-300 */
+        }
+
+        .spreadsheet-table th,
+        .spreadsheet-table td {
+            border: 1px solid #e2e8f0;
+            /* gray-300 */
+            padding: 0;
+            height: var(--row-height);
+            box-sizing: border-box;
+            position: relative;
+            /* For positioning input */
+            vertical-align: top;
+            /* Align content to top for better formula display */
+        }
+
+        .spreadsheet-table th {
+            font-weight: 600;
+            /* semibold */
+            color: #4a5568;
+            /* gray-700 */
+            text-align: center;
+            font-size: 0.875rem;
+            /* text-sm */
+            width: var(--col-width);
+            /* Default column width */
+        }
+
+        .spreadsheet-table th.row-header-col {
+            width: var(--header-col-width);
+            background-color: #cbd5e1;
+            /* gray-200 */
+            position: sticky;
+            left: 0;
+            z-index: 30;
+            /* Higher than other sticky headers */
+        }
+
+        .spreadsheet-table th.col-header-row {
+            background-color: #cbd5e1;
+            /* gray-200 */
+            position: sticky;
+            top: 0;
+            z-index: 25;
+            /* Below corner cell, above row headers */
+        }
+
+        .spreadsheet-table th.corner-cell {
+            position: sticky;
+            top: 0;
+            left: 0;
+            z-index: 40;
+            /* On top of everything */
+            background-color: #cbd5e1;
+            /* gray-200 */
+        }
+
+        .spreadsheet-table td.row-header {
+            background-color: #cbd5e1;
+            /* gray-200 */
+            font-weight: 600;
+            /* semibold */
+            color: #4a5568;
+            /* gray-700 */
+            text-align: center;
+            font-size: 0.875rem;
+            /* text-sm */
+            position: sticky;
+            left: 0;
+            z-index: 15;
+            /* Above normal cells, below corner/col headers */
+            width: var(--header-col-width);
+        }
+
+        /* Virtualized tbody positioning */
+        .spreadsheet-table tbody {
+            position: absolute;
+            /* Position tbody absolutely within the table */
+            top: var(--row-height);
+            /* Offset by header height */
+            left: var(--header-col-width);
+            /* Offset by row header width */
+            background-color: white;
+        }
+
+        .cell-content {
+            padding: 8px;
+            /* p-2 */
+            height: var(--row-height);
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            font-family: 'Inter', monospace;
+            color: #2d3748;
+            /* gray-800 */
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            cursor: default;
+        }
+
+        .cell-input {
+            width: 100%;
+            height: 100%;
+            padding: 8px;
+            /* p-2 */
+            box-sizing: border-box;
+            border: none;
+            outline: none;
+            background-color: #eff6ff;
+            /* blue-50 */
+            font-family: 'Inter', monospace;
+            color: #2d3748;
+            /* gray-800 */
+        }
+
+        /* Styling for selected cell */
+        .selected-cell {
+            border: 2px solid #3b82f6 !important;
+            /* blue-500 */
+            outline: 1px solid #3b82f6;
+            /* ring-1 ring-blue-500 */
+            z-index: 35;
+            /* Higher than other cells */
+            position: relative;
+            /* To make z-index work */
+        }
+
+        /* Styling for cell being edited */
+        .editing-cell {
+            background-color: #eff6ff !important;
+            /* blue-50 */
+        }
+
+        /* Styling for highlighted rows and columns */
+        .highlighted-row {
+            background-color: #e0f2fe;
+            /* blue-100 */
+        }
+
+        .highlighted-col-cell {
+            background-color: #e0f2fe;
+            /* blue-100 */
+        }
+
+        .highlighted-col-header {
+            background-color: #bfdbfe;
+            /* blue-200 */
+        }
+
+        /* Ensure selection and editing styles override highlight */
+        .selected-cell,
+        .editing-cell {
+            background-color: transparent;
+            /* Reset highlight for selected/editing cell itself */
+        }
+
+        .selected-cell .cell-content,
+        .editing-cell .cell-input {
+            background-color: transparent;
+            /* Ensure content/input background is not highlighted */
+        }
+    </style>
+    <!-- sql.js CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.js"></script>
+</head>
+
+<body class="min-h-screen bg-gray-100 text-gray-800 p-4 flex flex-col items-center">
+
+    <h1 class="text-4xl font-extrabold text-blue-700 mb-6 drop-shadow-lg rounded-md p-2">
+        HTML/JS Spreadsheet
+    </h1>
+
+    <!-- Formula Bar -->
+    <div class="w-full max-w-4xl bg-white p-3 rounded-lg shadow-md mb-4 flex items-center border border-blue-300">
+        <span class="font-bold text-blue-600 mr-2">fx</span>
+        <input type="text" id="formulaBar"
+            class="flex-grow p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400 font-mono text-gray-800"
+            placeholder="Enter formula or value (e.g., =A1+B1 or =SUM(A1:B5))" />
+    </div>
+
+    <!-- Spreadsheet Grid Container -->
+    <div id="spreadsheetViewport" class="spreadsheet-viewport w-full max-w-4xl">
+        <table id="spreadsheetGrid" class="spreadsheet-table bg-white">
+            <thead>
+                <tr>
+                    <th class="corner-cell"></th> <!-- Corner cell -->
+                    <!-- Column Headers will be generated here -->
+                </tr>
+            </thead>
+            <tbody>
+                <!-- Rows and Cells will be generated by JavaScript -->
+            </tbody>
+        </table>
+    </div>
+
+    <div class="mt-8 text-sm text-gray-500">
+        <p>
+            <strong>Usage:</strong> Click a cell to select it. Double-click or press Enter to edit.
+        </p>
+        <p>
+            Enter values or formulas. Formulas start with <code>=</code>.
+        </p>
+        <p>
+            <strong>Examples:</strong> <code>=A1+B2</code>, <code>=SUM(A1:C5)</code>, <code>=5*10+B1</code>
+        </p>
+        <p>
+            Use arrow keys to navigate. Press Enter to confirm edit and move down.
+        </p>
+        <p class="mt-2">
+            <strong>Note:</strong> This uses an in-memory SQL.js database. Data and styles will be lost when the tab is
+            closed.
+            For persistence across sessions, you would need to save the database to IndexedDB or localStorage.
+        </p>
+    </div>
+
+    <script>
+        const ROW_HEIGHT = 36; // px
+        const COL_WIDTH = 80; // px
+        const HEADER_COL_WIDTH = 48; // px for row number column
+        const VISIBLE_ROWS = 15; // Number of rows visible in the viewport
+        const VISIBLE_COLS = 8;  // Number of columns visible in the viewport
+        const BUFFER_ROWS = 5;   // Additional rows to render above/below visible for smooth scrolling
+        const BUFFER_COLS = 3;   // Additional columns to render left/right of visible
+
+        const HIGHLIGHT_COLOR = '#e0f2fe'; // blue-100 for cells, blue-200 for headers
+
+        let db = null; // sql.js database instance
+        let gridData = {}; // Sparse in-memory representation: gridData[row][col] = { value: 'raw', display: 'evaluated' }
+        let highlightData = { // In-memory representation of highlight data
+            rows: {}, // { rowIndex: color, ... }
+            cols: {}  // { colIndex: color, ... }
+        };
+        let selectedCell = null; // [row, col] - absolute index
+        let editingCell = null;  // [row, col] - absolute index
+
+        let firstVisibleRow = 0;
+        let firstVisibleCol = 0;
+        let maxScrollableRow = VISIBLE_ROWS + BUFFER_ROWS * 2; // Initial max for virtual scroll
+        let maxScrollableCol = VISIBLE_COLS + BUFFER_COLS * 2; // Initial max for virtual scroll
+
+        const formulaBar = document.getElementById('formulaBar');
+        const spreadsheetViewport = document.getElementById('spreadsheetViewport');
+        const spreadsheetGrid = document.getElementById('spreadsheetGrid');
+        const tbody = spreadsheetGrid.querySelector('tbody');
+        const theadRow = spreadsheetGrid.querySelector('thead tr');
+
+        // Helper function to convert column index to Excel-like column name (e.g., 0 -> A, 25 -> Z, 26 -> AA)
+        function getColumnName(colIndex) {
+            let name = '';
+            let dividend = colIndex + 1;
+            while (dividend > 0) {
+                const modulo = (dividend - 1) % 26;
+                name = String.fromCharCode(65 + modulo) + name;
+                dividend = Math.floor((dividend - modulo) / 26);
+            }
+            return name;
+        }
+
+        // Helper function to convert Excel-like column name to index (e.g., A -> 0, AA -> 26)
+        function getColumnIndex(columnName) {
+            let index = 0;
+            for (let i = 0; i < columnName.length; i++) {
+                index = index * 26 + (columnName.charCodeAt(i) - 65 + 1);
+            }
+            return index - 1;
+        }
+
+        // Helper function to parse cell references (e.g., A1, B2) into [row, col]
+        function parseCellReference(ref) {
+            const match = ref.match(/^([A-Z]+)(\d+)$/);
+            if (!match) return null;
+            const colName = match[1];
+            const rowNum = parseInt(match[2], 10);
+            const colIndex = getColumnIndex(colName);
+            return [rowNum - 1, colIndex]; // Convert to 0-indexed
+        }
+
+        // Function to initialize sql.js database
+        async function initDatabase() {
+            try {
+                const SQL = await initSqlJs({ locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}` });
+                db = new SQL.Database();
+
+                db.run(`
+                    CREATE TABLE IF NOT EXISTS cells (
+                        row INTEGER,
+                        col INTEGER,
+                        value TEXT,
+                        display TEXT,
+                        PRIMARY KEY (row, col)
+                    );
+                `);
+                db.run(`
+                    CREATE TABLE IF NOT EXISTS row_highlights (
+                        row INTEGER PRIMARY KEY,
+                        color TEXT
+                    );
+                `);
+                db.run(`
+                    CREATE TABLE IF NOT EXISTS col_highlights (
+                        col INTEGER PRIMARY KEY,
+                        color TEXT
+                    );
+                `);
+                console.log("SQL.js database initialized and tables created.");
+            } catch (err) {
+                console.error("Error initializing sql.js:", err);
+            }
+        }
+
+        // Function to save cell data to sql.js
+        function saveCellData(row, col, value, display) {
+            if (!db) {
+                console.error("Database not initialized. Cannot save data.");
+                return;
+            }
+            try {
+                db.run("INSERT OR REPLACE INTO cells (row, col, value, display) VALUES (?, ?, ?, ?);", [row, col, value, display]);
+            } catch (err) {
+                console.error("Error saving cell data:", err);
+            }
+        }
+
+        // Function to save highlight data to sql.js
+        function saveHighlightData(type, index, color) {
+            if (!db) {
+                console.error("Database not initialized. Cannot save highlight data.");
+                return;
+            }
+            try {
+                if (type === 'row') {
+                    if (color) {
+                        db.run("INSERT OR REPLACE INTO row_highlights (row, color) VALUES (?, ?);", [index, color]);
+                    } else {
+                        db.run("DELETE FROM row_highlights WHERE row = ?;", [index]);
+                    }
+                } else if (type === 'col') {
+                    if (color) {
+                        db.run("INSERT OR REPLACE INTO col_highlights (col, color) VALUES (?, ?);", [index, color]);
+                    } else {
+                        db.run("DELETE FROM col_highlights WHERE col = ?;", [index]);
+                    }
+                }
+            } catch (err) {
+                console.error(`Error saving ${type} highlight data for index ${index}:`, err);
+            }
+        }
+
+        // Function to load all cell data and highlights from sql.js
+        function loadGridData() {
+            if (!db) {
+                console.error("Database not initialized. Cannot load data.");
+                return;
+            }
+            try {
+                const cellRes = db.exec("SELECT row, col, value, display FROM cells;");
+                if (cellRes.length > 0) {
+                    const rows = cellRes[0].values;
+                    rows.forEach(row => {
+                        const r = row[0];
+                        const c = row[1];
+                        const val = row[2];
+                        const disp = row[3];
+                        if (!gridData[r]) gridData[r] = {};
+                        gridData[r][c] = { value: val, display: disp };
+                        // Update max scrollable dimensions if loaded data is beyond current view
+                        maxScrollableRow = Math.max(maxScrollableRow, r + 1 + VISIBLE_ROWS + BUFFER_ROWS);
+                        maxScrollableCol = Math.max(maxScrollableCol, c + 1 + VISIBLE_COLS + BUFFER_COLS);
+                    });
+                    console.log("Cell data loaded from SQL.js.");
+                } else {
+                    console.log("No existing cell data in SQL.js database.");
+                }
+
+                const rowHighlightRes = db.exec("SELECT row, color FROM row_highlights;");
+                if (rowHighlightRes.length > 0) {
+                    rowHighlightRes[0].values.forEach(row => {
+                        highlightData.rows[row[0]] = row[1];
+                    });
+                    console.log("Row highlight data loaded from SQL.js.");
+                }
+
+                const colHighlightRes = db.exec("SELECT col, color FROM col_highlights;");
+                if (colHighlightRes.length > 0) {
+                    colHighlightRes[0].values.forEach(col => {
+                        highlightData.cols[col[0]] = col[1];
+                    });
+                    console.log("Column highlight data loaded from SQL.js.");
+                }
+
+            } catch (err) {
+                console.error("Error loading grid data:", err);
+            }
+        }
+
+        // Function to get cell data (handles sparse gridData)
+        function getCellData(row, col) {
+            if (!gridData[row] || !gridData[row][col]) {
+                return { value: '', display: '' };
+            }
+            return gridData[row][col];
+        }
+
+        // Function to set cell data (handles sparse gridData)
+        function setCellData(row, col, value, display) {
+            if (!gridData[row]) {
+                gridData[row] = {};
+            }
+            gridData[row][col] = { value: value, display: display };
+        }
+
+        // Function to evaluate a single cell's formula
+        function evaluateCell(row, col) {
+            const cell = getCellData(row, col);
+            let displayValue = cell.value;
+
+            if (typeof cell.value === 'string' && cell.value.startsWith('=')) {
+                try {
+                    const formula = cell.value.substring(1);
+
+                    const evaluatedFormula = formula.replace(/[A-Z]+\d+/g, (match) => {
+                        const refCoords = parseCellReference(match);
+                        if (refCoords) {
+                            const referencedCell = getCellData(refCoords[0], refCoords[1]);
+                            return parseFloat(referencedCell.display || 0);
+                        }
+                        return 0;
+                    });
+
+                    const sumMatch = evaluatedFormula.match(/SUM\(([A-Z]+\d+):([A-Z]+\d+)\)/i);
+                    if (sumMatch) {
+                        const startRef = parseCellReference(sumMatch[1]);
+                        const endRef = parseCellReference(sumMatch[2]);
+
+                        if (startRef && endRef) {
+                            let sum = 0;
+                            const startRow = Math.min(startRef[0], endRef[0]);
+                            const endRow = Math.max(startRef[0], endRef[0]);
+                            const startCol = Math.min(startRef[1], endRef[1]);
+                            const endCol = Math.max(startRef[1], endRef[1]);
+
+                            for (let r = startRow; r <= endRow; r++) {
+                                for (let c = startCol; c <= endCol; c++) {
+                                    sum += parseFloat(getCellData(r, c).display || 0);
+                                }
+                            }
+                            displayValue = sum;
+                        } else {
+                            displayValue = '#REF!';
+                        }
+                    } else {
+                        displayValue = eval(evaluatedFormula); // UNSAFE for untrusted input
+                    }
+
+                    if (typeof displayValue === 'number' && !isNaN(displayValue)) {
+                        displayValue = parseFloat(displayValue.toFixed(6));
+                    } else {
+                        displayValue = '#ERROR!';
+                    }
+
+                } catch (e) {
+                    console.error(`Error evaluating formula at [${row}, ${col}]: ${cell.value}`, e);
+                    displayValue = '#ERROR!';
+                }
+            }
+
+            if (cell.display !== displayValue) {
+                setCellData(row, col, cell.value, displayValue); // Update gridData directly
+                return true; // Indicate change
+            }
+            return false; // No change
+        }
+
+        // Function to re-evaluate all cells that might be affected
+        function evaluateAllCells() {
+            let changed = true;
+            let iteration = 0;
+            const MAX_ITERATIONS = (maxScrollableRow + BUFFER_ROWS) * (maxScrollableCol + BUFFER_COLS) * 2; // Max possible cells * 2
+
+            // Iterate through all known cells (could be optimized to only iterate changed cells and their dependents)
+            while (changed && iteration < MAX_ITERATIONS) {
+                changed = false;
+                for (const rStr in gridData) {
+                    const r = parseInt(rStr, 10);
+                    for (const cStr in gridData[r]) {
+                        const c = parseInt(cStr, 10);
+                        if (evaluateCell(r, c)) {
+                            changed = true;
+                        }
+                    }
+                }
+                iteration++;
+            }
+
+            if (iteration >= MAX_ITERATIONS) {
+                console.warn("Max evaluation iterations reached. Possible circular references or complex dependencies.");
+            }
+            renderGrid(); // Re-render the grid after evaluation
+        }
+
+        // Function to update the DOM for a specific cell (used after evaluation)
+        function updateCellDOM(row, col) {
+            // Only update if the cell is currently rendered
+            if (row >= firstVisibleRow && row < firstVisibleRow + VISIBLE_ROWS + BUFFER_ROWS * 2 &&
+                col >= firstVisibleCol && col < firstVisibleCol + VISIBLE_COLS + BUFFER_COLS * 2) {
+                const cellElement = document.getElementById(`cell-${row}-${col}`);
+                if (cellElement) {
+                    const cellData = getCellData(row, col);
+                    if (editingCell && editingCell[0] === row && editingCell[1] === col) {
+                        const inputElement = cellElement.querySelector('.cell-input');
+                        if (inputElement) {
+                            inputElement.value = cellData.value;
+                        }
+                    } else {
+                        const contentDiv = cellElement.querySelector('.cell-content');
+                        if (contentDiv) {
+                            contentDiv.textContent = cellData.display;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Function to render the visible portion of the grid
+        function renderGrid() {
+            const startRow = Math.max(0, firstVisibleRow - BUFFER_ROWS);
+            const endRow = firstVisibleRow + VISIBLE_ROWS + BUFFER_ROWS;
+            const startCol = Math.max(0, firstVisibleCol - BUFFER_COLS);
+            const endCol = firstVisibleCol + VISIBLE_COLS + BUFFER_COLS;
+
+            // Clear existing headers and tbody content
+            while (theadRow.children.length > 1) { // Keep the corner cell
+                theadRow.removeChild(theadRow.lastChild);
+            }
+            tbody.innerHTML = '';
+
+            // Set padding to simulate total scrollable area
+            spreadsheetViewport.style.paddingBottom = `${(maxScrollableRow - (firstVisibleRow + VISIBLE_ROWS)) * ROW_HEIGHT}px`;
+            spreadsheetViewport.style.paddingRight = `${(maxScrollableCol - (firstVisibleCol + VISIBLE_COLS)) * COL_WIDTH}px`;
+
+            // Render column headers
+            for (let c = startCol; c < endCol; c++) {
+                const th = document.createElement('th');
+                th.id = `col-header-${c}`;
+                th.className = 'col-header-row';
+                th.textContent = getColumnName(c);
+                if (highlightData.cols[c]) {
+                    th.classList.add('highlighted-col-header');
+                }
+                theadRow.appendChild(th);
+            }
+
+            // Position tbody (relative to table which is full width/height)
+            tbody.style.transform = `translateY(${startRow * ROW_HEIGHT}px) translateX(${startCol * COL_WIDTH}px)`;
+            tbody.style.width = `${(endCol - startCol) * COL_WIDTH}px`;
+            tbody.style.height = `${(endRow - startRow) * ROW_HEIGHT}px`;
+
+
+            // Render rows and cells
+            for (let r = startRow; r < endRow; r++) {
+                const tr = document.createElement('tr');
+                tr.id = `row-${r}`;
+                // Apply row highlight if exists
+                if (highlightData.rows[r]) {
+                    tr.classList.add('highlighted-row');
+                }
+
+                // Row header (sticky left)
+                const rowHeaderTd = document.createElement('td');
+                rowHeaderTd.className = 'row-header';
+                rowHeaderTd.textContent = r + 1;
+                tr.appendChild(rowHeaderTd);
+
+                for (let c = startCol; c < endCol; c++) {
+                    const td = document.createElement('td');
+                    td.id = `cell-${r}-${c}`;
+                    td.className = 'cell';
+                    // Apply column highlight to individual cells
+                    if (highlightData.cols[c]) {
+                        td.classList.add('highlighted-col-cell');
+                    }
+
+                    const cellData = getCellData(r, c);
+
+                    const contentDiv = document.createElement('div');
+                    contentDiv.className = 'cell-content';
+                    contentDiv.textContent = cellData.display;
+                    td.appendChild(contentDiv);
+
+                    const input = document.createElement('input');
+                    input.type = 'text';
+                    input.className = 'cell-input hidden';
+                    input.value = cellData.value;
+                    input.id = `input-${r}-${c}`;
+                    td.appendChild(input);
+
+                    tr.appendChild(td);
+                }
+                tbody.appendChild(tr);
+            }
+
+            // Apply selected cell styling if any
+            if (selectedCell) {
+                const [r, c] = selectedCell;
+                const cellElement = document.getElementById(`cell-${r}-${c}`);
+                if (cellElement) {
+                    cellElement.classList.add('selected-cell');
+                }
+            }
+            // Apply editing cell styling and show input
+            if (editingCell) {
+                const [r, c] = editingCell;
+                const cellElement = document.getElementById(`cell-${r}-${c}`);
+                if (cellElement) {
+                    cellElement.classList.add('editing-cell');
+                    cellElement.querySelector('.cell-content').classList.add('hidden');
+                    const inputElement = cellElement.querySelector('.cell-input');
+                    if (inputElement) {
+                        inputElement.classList.remove('hidden');
+                        inputElement.focus();
+                        inputElement.select();
+                    }
+                }
+            }
+        }
+
+        // Event Handlers
+
+        function applyHighlights(row, col) {
+            // Remove previous highlights
+            if (selectedCell) {
+                const [prevR, prevC] = selectedCell;
+                // Only remove if the previously selected row/col is still in the DOM
+                const prevRowElement = document.getElementById(`row-${prevR}`);
+                if (prevRowElement) {
+                    prevRowElement.classList.remove('highlighted-row');
+                }
+                const prevColHeader = document.getElementById(`col-header-${prevC}`);
+                if (prevColHeader) {
+                    prevColHeader.classList.remove('highlighted-col-header');
+                }
+                // Iterate over currently rendered cells to remove column highlight
+                const startCol = Math.max(0, firstVisibleCol - BUFFER_COLS);
+                const endCol = firstVisibleCol + VISIBLE_COLS + BUFFER_COLS;
+                for (let r = Math.max(0, firstVisibleRow - BUFFER_ROWS); r < firstVisibleRow + VISIBLE_ROWS + BUFFER_ROWS; r++) {
+                    const cell = document.getElementById(`cell-${r}-${prevC}`);
+                    if (cell) {
+                        cell.classList.remove('highlighted-col-cell');
+                    }
+                }
+            }
+
+            // Apply new highlights
+            const newRowElement = document.getElementById(`row-${row}`);
+            if (newRowElement) {
+                newRowElement.classList.add('highlighted-row');
+            }
+            const newColHeader = document.getElementById(`col-header-${col}`);
+            if (newColHeader) {
+                newColHeader.classList.add('highlighted-col-header');
+            }
+            // Iterate over currently rendered cells to apply column highlight
+            for (let r = Math.max(0, firstVisibleRow - BUFFER_ROWS); r < firstVisibleRow + VISIBLE_ROWS + BUFFER_ROWS; r++) {
+                const cell = document.getElementById(`cell-${r}-${col}`);
+                if (cell) {
+                    cell.classList.add('highlighted-col-cell');
+                }
+            }
+            // Save highlight state to DB
+            saveHighlightData('row', row, HIGHLIGHT_COLOR);
+            saveHighlightData('col', col, HIGHLIGHT_COLOR);
+        }
+
+        function removeAllHighlightsFromDOM() {
+            // Remove all row highlights
+            document.querySelectorAll('.highlighted-row').forEach(el => el.classList.remove('highlighted-row'));
+            // Remove all column header highlights
+            document.querySelectorAll('.highlighted-col-header').forEach(el => el.classList.remove('highlighted-col-header'));
+            // Remove all column cell highlights
+            document.querySelectorAll('.highlighted-col-cell').forEach(el => el.classList.remove('highlighted-col-cell'));
+        }
+
+        function applyLoadedHighlightsToDOM() {
+            for (const rStr in highlightData.rows) {
+                const r = parseInt(rStr, 10);
+                const rowElement = document.getElementById(`row-${r}`);
+                if (rowElement) {
+                    rowElement.classList.add('highlighted-row');
+                }
+            }
+            for (const cStr in highlightData.cols) {
+                const c = parseInt(cStr, 10);
+                const colHeader = document.getElementById(`col-header-${c}`);
+                if (colHeader) {
+                    colHeader.classList.add('highlighted-col-header');
+                }
+                const startRow = Math.max(0, firstVisibleRow - BUFFER_ROWS);
+                const endRow = firstVisibleRow + VISIBLE_ROWS + BUFFER_ROWS;
+                for (let r = startRow; r < endRow; r++) {
+                    const cell = document.getElementById(`cell-${r}-${c}`);
+                    if (cell) {
+                        cell.classList.add('highlighted-col-cell');
+                    }
+                }
+            }
+        }
+
+
+        function handleCellClick(event) {
+            let targetCell = event.target.closest('.cell');
+            if (!targetCell) return;
+
+            // Remove previous selection border
+            if (selectedCell) {
+                const [prevR, prevC] = selectedCell;
+                const prevCellElement = document.getElementById(`cell-${prevR}-${prevC}`);
+                if (prevCellElement) {
+                    prevCellElement.classList.remove('selected-cell');
+                }
+            }
+
+            const idParts = targetCell.id.split('-');
+            const r = parseInt(idParts[1], 10);
+            const c = parseInt(idParts[2], 10);
+
+            selectedCell = [r, c];
+            targetCell.classList.add('selected-cell');
+
+            // Apply row/column highlights
+            applyHighlights(r, c);
+
+            // Exit editing mode if clicking a new cell
+            if (editingCell && (editingCell[0] !== r || editingCell[1] !== c)) {
+                exitEditingMode();
+            }
+
+            formulaBar.value = getCellData(r, c).value;
+            formulaBar.focus();
+        }
+
+        function handleCellDoubleClick(event) {
+            const targetCell = event.target.closest('.cell');
+            if (!targetCell) return;
+
+            const idParts = targetCell.id.split('-');
+            const r = parseInt(idParts[1], 10);
+            const c = parseInt(idParts[2], 10);
+
+            enterEditingMode(r, c);
+        }
+
+        function enterEditingMode(r, c) {
+            if (editingCell) {
+                exitEditingMode();
+            }
+
+            editingCell = [r, c];
+            selectedCell = [r, c];
+
+            const cellElement = document.getElementById(`cell-${r}-${c}`);
+            if (cellElement) {
+                cellElement.classList.add('editing-cell');
+                cellElement.querySelector('.cell-content').classList.add('hidden');
+                const inputElement = cellElement.querySelector('.cell-input');
+                if (inputElement) {
+                    inputElement.classList.remove('hidden');
+                    inputElement.focus();
+                    inputElement.select();
+                }
+                formulaBar.value = getCellData(r, c).value;
+            }
+        }
+
+        function exitEditingMode(save = true) {
+            if (!editingCell) return;
+
+            const [r, c] = editingCell;
+            const cellElement = document.getElementById(`cell-${r}-${c}`);
+            if (cellElement) {
+                const inputElement = cellElement.querySelector('.cell-input');
+                const newValue = inputElement ? inputElement.value : getCellData(r, c).value;
+
+                if (save && getCellData(r, c).value !== newValue) {
+                    setCellData(r, c, newValue, ''); // Update in-memory gridData
+                    saveCellData(r, c, newValue, ''); // Save raw value to DB
+                    evaluateAllCells(); // Re-evaluate the entire grid
+                }
+
+                cellElement.classList.remove('editing-cell');
+                cellElement.querySelector('.cell-content').classList.remove('hidden');
+                if (inputElement) {
+                    inputElement.classList.add('hidden');
+                }
+            }
+            editingCell = null;
+        }
+
+        function handleFormulaBarChange() {
+            if (!selectedCell) return;
+
+            const [r, c] = selectedCell;
+            const newValue = formulaBar.value;
+
+            if (getCellData(r, c).value !== newValue) {
+                setCellData(r, c, newValue, '');
+                saveCellData(r, c, newValue, '');
+                evaluateAllCells();
+            }
+        }
+
+        function handleCellInput(event) {
+            const targetInput = event.target;
+            const idParts = targetInput.id.split('-');
+            const r = parseInt(idParts[1], 10);
+            const c = parseInt(idParts[2], 10);
+            const newValue = targetInput.value;
+
+            setCellData(r, c, newValue, ''); // Update in-memory gridData immediately
+            formulaBar.value = newValue; // Sync formula bar
+        }
+
+        function handleKeyDown(event) {
+            if (!selectedCell) return;
+
+            let [currentRow, currentCol] = selectedCell;
+            let newSelectedCell = null;
+
+            switch (event.key) {
+                case 'ArrowUp':
+                    newSelectedCell = [Math.max(0, currentRow - 1), currentCol];
+                    event.preventDefault();
+                    break;
+                case 'ArrowDown':
+                    newSelectedCell = [currentRow + 1, currentCol];
+                    event.preventDefault();
+                    break;
+                case 'ArrowLeft':
+                    newSelectedCell = [currentRow, Math.max(0, currentCol - 1)];
+                    event.preventDefault();
+                    break;
+                case 'ArrowRight':
+                    newSelectedCell = [currentRow, currentCol + 1];
+                    event.preventDefault();
+                    break;
+                case 'Enter':
+                    if (editingCell) {
+                        exitEditingMode();
+                        newSelectedCell = [currentRow + 1, currentCol];
+                    } else {
+                        enterEditingMode(currentRow, currentCol);
+                    }
+                    event.preventDefault();
+                    break;
+                case 'Escape':
+                    exitEditingMode(false);
+                    event.preventDefault();
+                    break;
+                default:
+                    if (!editingCell && event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) {
+                        enterEditingMode(currentRow, currentCol);
+                        const cellInput = document.getElementById(`input-${currentRow}-${currentCol}`);
+                        if (cellInput) {
+                            cellInput.value = event.key;
+                            setCellData(currentRow, currentCol, event.key, '');
+                            formulaBar.value = event.key;
+                            cellInput.setSelectionRange(cellInput.value.length, cellInput.value.length);
+                        }
+                        event.preventDefault();
+                    }
+                    break;
+            }
+
+            if (newSelectedCell) {
+                // Ensure newSelectedCell is within reasonable bounds for maxScrollableRow/Col
+                maxScrollableRow = Math.max(maxScrollableRow, newSelectedCell[0] + VISIBLE_ROWS + BUFFER_ROWS);
+                maxScrollableCol = Math.max(maxScrollableCol, newSelectedCell[1] + VISIBLE_COLS + BUFFER_COLS);
+
+                // Scroll viewport to make new selected cell visible
+                const targetScrollTop = newSelectedCell[0] * ROW_HEIGHT;
+                const targetScrollLeft = newSelectedCell[1] * COL_WIDTH;
+
+                if (targetScrollTop < spreadsheetViewport.scrollTop ||
+                    targetScrollTop + ROW_HEIGHT > spreadsheetViewport.scrollTop + spreadsheetViewport.clientHeight) {
+                    spreadsheetViewport.scrollTop = targetScrollTop;
+                }
+                if (targetScrollLeft < spreadsheetViewport.scrollLeft ||
+                    targetScrollLeft + COL_WIDTH > spreadsheetViewport.scrollLeft + spreadsheetViewport.clientWidth) {
+                    spreadsheetViewport.scrollLeft = targetScrollLeft;
+                }
+
+                // Remove old selection border
+                if (selectedCell) {
+                    const [prevR, prevC] = selectedCell;
+                    const prevCellElement = document.getElementById(`cell-${prevR}-${prevC}`);
+                    if (prevCellElement) {
+                        prevCellElement.classList.remove('selected-cell');
+                    }
+                }
+                // Apply new selection border
+                selectedCell = newSelectedCell;
+                const [r, c] = selectedCell;
+                const newCellElement = document.getElementById(`cell-${r}-${c}`);
+                if (newCellElement) {
+                    newCellElement.classList.add('selected-cell');
+                }
+                applyHighlights(r, c); // Apply highlights for the new selection
+
+                formulaBar.value = getCellData(r, c).value;
+                formulaBar.focus();
+            }
+        }
+
+        // Debounce function for scroll events
+        function debounce(func, delay) {
+            let timeout;
+            return function (...args) {
+                const context = this;
+                clearTimeout(timeout);
+                timeout = setTimeout(() => func.apply(context, args), delay);
+            };
+        }
+
+        const handleScroll = debounce(() => {
+            const newFirstVisibleRow = Math.floor(spreadsheetViewport.scrollTop / ROW_HEIGHT);
+            const newFirstVisibleCol = Math.floor(spreadsheetViewport.scrollLeft / COL_WIDTH);
+
+            // Extend max scrollable area if near the edge
+            if (newFirstVisibleRow + VISIBLE_ROWS + BUFFER_ROWS >= maxScrollableRow) {
+                maxScrollableRow += VISIBLE_ROWS; // Add more virtual rows
+            }
+            if (newFirstVisibleCol + VISIBLE_COLS + BUFFER_COLS >= maxScrollableCol) {
+                maxScrollableCol += VISIBLE_COLS; // Add more virtual columns
+            }
+
+            if (newFirstVisibleRow !== firstVisibleRow || newFirstVisibleCol !== firstVisibleCol) {
+                firstVisibleRow = newFirstVisibleRow;
+                firstVisibleCol = newFirstVisibleCol;
+                renderGrid();
+                // After re-rendering, re-apply highlights and selection if they are in view
+                if (selectedCell) {
+                    const [r, c] = selectedCell;
+                    const cellElement = document.getElementById(`cell-${r}-${c}`);
+                    if (cellElement) {
+                        cellElement.classList.add('selected-cell');
+                    }
+                    applyHighlights(r, c); // Re-apply highlights to ensure they are visible
+                }
+                applyLoadedHighlightsToDOM(); // Re-apply all loaded highlights
+            }
+        }, 100); // Debounce by 100ms
+
+        // Attach event listeners
+        window.onload = async function () {
+            await initDatabase();
+            loadGridData(); // Load data and highlights
+            renderGrid(); // Initial render with loaded data and styles
+            evaluateAllCells(); // Evaluate formulas after loading
+
+            spreadsheetViewport.addEventListener('scroll', handleScroll);
+            spreadsheetGrid.addEventListener('click', handleCellClick);
+            spreadsheetGrid.addEventListener('dblclick', handleCellDoubleClick);
+            formulaBar.addEventListener('input', handleFormulaBarChange);
+
+            spreadsheetGrid.addEventListener('input', function (event) {
+                if (event.target.classList.contains('cell-input')) {
+                    handleCellInput(event);
+                }
+            });
+            spreadsheetGrid.addEventListener('blur', function (event) {
+                if (event.target.classList.contains('cell-input')) {
+                    if (document.activeElement !== formulaBar) {
+                        exitEditingMode();
+                    }
+                }
+            }, true);
+
+            window.addEventListener('keydown', handleKeyDown);
+        };
+    </script>
+</body>
+
+</html>

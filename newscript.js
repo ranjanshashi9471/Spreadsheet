@@ -1,6 +1,5 @@
 //global variables
 let db; // Global variable to hold the database instance
-let sheetColList = [];
 let chunkSize = 50;
 const columnLimit = 100000;
 const rowLimit = 100000;
@@ -169,18 +168,19 @@ function runSQLQuery() {
 
 //creating sheet in db with user specified rows and columns
 async function renderNewSpreadsheet() {
-	const spreadsheet = new Spreadsheet
+	const sheetName = `untitled` + Math.floor(Math.random() * 100);
+	const mySpreadsheet = new Spreadsheet(sheetName);
 	mySpreadsheet.rowCount = document.getElementById("user-rows").value;
 	mySpreadsheet.colCount =
 		document.getElementById("user-columns").value % columnLimit;
-	mySpreadsheet.sheetName = `untitled` + Math.floor(Math.random() * 100);
-	mySpreadsheet.colRowTree = null;
-
-	const colList = renderTableStructure(
+	renderTableStructure(mySpreadsheet.sheetName);
+	const colList = renderColHead(
 		mySpreadsheet.sheetName,
 		mySpreadsheet.colCount
 	);
-	appendEmptyRows(mySpreadsheet.sheetName, mySpreadsheet., mySpreadsheet.rowCount);
+	renderSheetFeatures(mySpreadsheet.sheetName, colList);
+	appendEmptyRows(mySpreadsheet.sheetName, colList, mySpreadsheet.rowCount);
+	addResizing();
 
 	// let query = `CREATE TABLE ${randomName} (c0 INTEGER PRIMARY KEY`;
 	// const colNameList = [];
@@ -257,10 +257,10 @@ function renderColHeadDb(sheetName) {
 	return sheetColList;
 }
 
-function renderColHead(sheetName) {
+function renderColHead(sheetName, colCount) {
 	try {
 		const tableHeader = document.getElementById(`${sheetName}_header`);
-		sheetColList.length = 0;
+		sheetColList = [];
 		for (let i = 0; i < colCount; i++) {
 			sheetColList.push(`c${i}`);
 			const headerDesc = document.createElement("th");
@@ -278,8 +278,6 @@ function renderColHead(sheetName) {
 	return sheetColList;
 }
 
-function renderTableDataFromDb(sheetname) {}
-
 //rendering the structure of sheet
 function renderTableStructure(sheetName) {
 	const userSelect = document.getElementById("user-select");
@@ -295,7 +293,7 @@ function renderTableStructure(sheetName) {
     `;
 }
 
-function renderSheetFeatures(sheetName) {
+function renderSheetFeatures(sheetName, sheetColList) {
 	const restInput = document.getElementById("rest-all-input");
 	restInput.innerHTML = `
 		<div style="margin: 10px 0px; display:flex; flex-direction:row;">
@@ -320,6 +318,7 @@ function addResizing() {
 	divclass.forEach((resizer) => {
 		resizer.addEventListener("mousedown", (e) => {
 			const th = e.target.parentElement;
+			console.log(th);
 			const col_class = th.classList[0];
 			const startWidth = th.offsetWidth;
 			const startX = e.pageX;
@@ -395,7 +394,6 @@ function appendEmptyRows(sheetName, colsList, rows) {
 	try {
 		prev_rows = table_body.lastChild.firstChild.innerHTML - "0";
 	} catch (error) {
-		// console.error(error);
 		console.log("Prev rows not found rendering from 0");
 	}
 	console.log(prev_rows);
@@ -406,7 +404,7 @@ function appendEmptyRows(sheetName, colsList, rows) {
 			if (j != 0) {
 				tableCol.innerHTML = `
 					<div class="container">
-                		<input class="${colsList[j]}"
+                		<input class="${colsList[j]} input-cell"
 							type="text"
 							name= "${sheetName}"
 							oninput = "handleInputChange(event,${prev_rows + i + 1}, '${colsList[j]}')" />
@@ -540,64 +538,66 @@ function handleInputChange(event, rowno, colname) {
 	}
 }
 
-//saving to Database
-function saveToDb(mySpreadsheet) {
-	//mySpreadsheet has properties:
-	// sheetName: null,
-	// rowCount: null,
-	// colCount: null,
-	// colRowTree: null,
+function renderTableDataFromDb(sheetname) {}
 
-	if (mySpreadsheet) {
-		try {
-			db.run(
-				`CREATE TABLE IF NOT EXISTS ${mySpreadsheet.sheetName}_values (row_no TEXT, col_no TEXT, value TEXT);`
-			);
-		} catch (error) {
-			console.log(error);
-		}
-		if (mySpreadsheet.colRowTree) {
-			const colStack = [];
-			colStack.push(mySpreadsheet.colRowTree);
-			while (colStack.length > 0) {
-				//pop the top
-				const col = colStack.pop();
-				//push the left right of the col
-				if (col.right !== null) colStack.push(col.right);
-				if (col.left !== null) colStack.push(col.left);
+// //saving to Database
+// function saveToDb(mySpreadsheet) {
+// 	//mySpreadsheet has properties:
+// 	// sheetName: null,
+// 	// rowCount: null,
+// 	// colCount: null,
+// 	// colRowTree: null,
 
-				//work on rows of the column
-				//col has following properties
-				// key: colKey,
-				// name: null,
-				// rows: null, // Secondary AVL Tree for columns
-				// left: null,
-				// right: null,
-				// height: 1,
-				if (col.rows !== null) {
-					const rowStack = [];
-					rowStack.push(col.rows);
-					while (rowStack.length > 0) {
-						//pop the top
-						const row = rowStack.pop();
-						//push the left right of the row
-						if (row.right !== null) rowStack.push(row.right);
-						if (row.left !== null) rowStack.push(row.left);
+// 	if (mySpreadsheet) {
+// 		try {
+// 			db.run(
+// 				`CREATE TABLE IF NOT EXISTS ${mySpreadsheet.sheetName}_values (row_no TEXT, col_no TEXT, value TEXT);`
+// 			);
+// 		} catch (error) {
+// 			console.log(error);
+// 		}
+// 		if (mySpreadsheet.colRowTree) {
+// 			const colStack = [];
+// 			colStack.push(mySpreadsheet.colRowTree);
+// 			while (colStack.length > 0) {
+// 				//pop the top
+// 				const col = colStack.pop();
+// 				//push the left right of the col
+// 				if (col.right !== null) colStack.push(col.right);
+// 				if (col.left !== null) colStack.push(col.left);
 
-						//work on row
-						try {
-							db.run(
-								`INSERT INTO ${mySpreadsheet.sheetName}_values(row_no, col_no, value) VALUES('${row.key}', '${col.key}', '${row.value}') ON CONFLICT(row_no, col_no) DO UPDATE SET value='${row.value}';`
-							);
-						} catch (error) {
-							console.log(error);
-						}
-					}
-				}
-			}
-		}
-	}
-}
+// 				//work on rows of the column
+// 				//col has following properties
+// 				// key: colKey,
+// 				// name: null,
+// 				// rows: null, // Secondary AVL Tree for columns
+// 				// left: null,
+// 				// right: null,
+// 				// height: 1,
+// 				if (col.rows !== null) {
+// 					const rowStack = [];
+// 					rowStack.push(col.rows);
+// 					while (rowStack.length > 0) {
+// 						//pop the top
+// 						const row = rowStack.pop();
+// 						//push the left right of the row
+// 						if (row.right !== null) rowStack.push(row.right);
+// 						if (row.left !== null) rowStack.push(row.left);
+
+// 						//work on row
+// 						try {
+// 							db.run(
+// 								`INSERT INTO ${mySpreadsheet.sheetName}_values(row_no, col_no, value) VALUES('${row.key}', '${col.key}', '${row.value}') ON CONFLICT(row_no, col_no) DO UPDATE SET value='${row.value}';`
+// 							);
+// 						} catch (error) {
+// 							console.log(error);
+// 						}
+// 					}
+// 				}
+// 			}
+// 		}
+// 	}
+// }
 
 function dbToDs() {
 	//load fron db to show into sheet.
@@ -719,41 +719,8 @@ function loadJson(event) {
 	};
 }
 
-//sidepanel handlers
-function openSidePanel() {
-	document.getElementById("sidepanel-items").style.width = "250px";
-}
-
-function closeSidePanel() {
-	document.getElementById("sidepanel-items").style.width = "0";
-}
-
-function renderSidePanel() {
-	const root = document.getElementById("root");
-
-	root.innerHTML = `
-    <div id = "sidepanel-items" class = "sidepanel">
-      <div id = "options">
-        <a class = "sidepanel-close" onclick = "closeSidePanel()">&times;</a>
-        <a onclick = "addNewSheetInput()">Add new Sheet</a>
-        <a onclick = "renderDbDumpInput()">Load from Database Dump</a>
-        <a onclick = "renderSchemaInput()">Load from Schema File</a>
-        <a onclick = "renderSQLInput()">Run SQL query</a>
-      </div>
-      <div id = "sheet-list"></div>
-    </div>
-    <div id = input-space>
-      <div id = "sidepanel-btn">
-  		    <button class = "sidepanel-open" onclick = "openSidePanel()">&#9776;</button>
-      </div>
-      <div id = "rest-all-input"></div>
-    </div>
-    <div id = "user-select"></div>
-  `;
-	openSidePanel();
-}
-
-const renderSheetsNames = (type = "normal") => {
+// Function to render the names of all sheets in the side panel
+function renderSheetsNames() {
 	const sheetList = document.getElementById("sheet-list");
 	//adding tables to sidePanel using anchor tag
 	const result = db.exec("SELECT name FROM sqlite_master WHERE type='table';");
@@ -776,7 +743,41 @@ const renderSheetsNames = (type = "normal") => {
 		});
 	}
 	openSidePanel();
-};
+}
+
+//sidepanel handlers
+function openSidePanel() {
+	document.getElementById("sidepanel-items").style.width = "250px";
+}
+
+function closeSidePanel() {
+	document.getElementById("sidepanel-items").style.width = "0";
+}
+
+//Function to render the side panel with options
+function renderSidePanel() {
+	const root = document.getElementById("root");
+	root.innerHTML = `
+    <div id = "sidepanel-items" class = "sidepanel">
+      <div id = "options">
+        <a class = "sidepanel-close" onclick = "closeSidePanel()">&times;</a>
+        <a onclick = "addNewSheetInput()">Add new Sheet</a>
+        <a onclick = "renderDbDumpInput()">Load from Database Dump</a>
+        <a onclick = "renderSchemaInput()">Load from Schema File</a>
+        <a onclick = "renderSQLInput()">Run SQL query</a>
+      </div>
+      <div id = "sheet-list"></div>
+    </div>
+    <div id = input-space>
+      <div id = "sidepanel-btn">
+  		    <button class = "sidepanel-open" onclick = "openSidePanel()">&#9776;</button>
+      </div>
+      <div id = "rest-all-input"></div>
+    </div>
+    <div id = "user-select"></div>
+  `;
+	openSidePanel();
+}
 
 //Initialize the database and render data
 initializeDatabase().then(() => {

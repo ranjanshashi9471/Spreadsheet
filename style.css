@@ -197,6 +197,10 @@ td input {
 	cursor: pointer;
 }
 
+.input-cell {
+	width: 50px;
+}
+
 /* .pagination {
 	display: inline-block;
 	margin-top: 10px;

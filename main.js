@@ -1,12 +1,13 @@
 // main.js (No changes from previous step)
 
-import { databaseService } from "./dbOps.js";
-import { spreadsheetUI } from "./ui.js";
-
 async function initializeApp() {
 	try {
+		const databaseService = new DatabaseService();
 		await databaseService.initialize();
-		await spreadsheetUI.renderSheetsNames();
+
+		const spreadsheetUI = await new SpreadsheetUI("root", databaseService);
+		await spreadsheetUI.initializeUI();
+
 		console.log("Application initialized successfully.");
 	} catch (error) {
 		console.error("Failed to initialize application:", error);

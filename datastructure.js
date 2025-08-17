@@ -155,7 +155,7 @@ class AVLTree {
  * Represents a spreadsheet using an AVL tree of AVL trees.
  * This is an in-memory data structure.
  */
-export class Spreadsheet {
+class Spreadsheet {
 	// Export this class
 	constructor(sheetName = "Sheet1") {
 		this.sheetName = sheetName;

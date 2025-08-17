@@ -29,6 +29,13 @@ class DatabaseService {
 			}
 			this.SQL = await initSqlJs();
 			this.db = new this.SQL.Database();
+
+			this.runSchema(`
+				CREATE TABLE IF NOT EXISTS sheets (
+					sheet_id INTEGER PRIMARY KEY,
+					sheet_name TEXT
+				);
+			`); // Ensure the sheets table exists
 			console.log("Database created and initialized.");
 		} catch (error) {
 			console.error("Error initializing database:", error);
@@ -189,6 +196,3 @@ class DatabaseService {
 		}
 	}
 }
-
-// Export a single instance of the DatabaseService
-export const databaseService = new DatabaseService();

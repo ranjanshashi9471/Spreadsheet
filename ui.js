@@ -1,21 +1,29 @@
 // SpreadsheetUI.js (Updated)
 
-import { databaseService } from "./dbOps.js";
-import { Spreadsheet } from "./datastructure.js"; // Import your Spreadsheet class
-
 class SpreadsheetUI {
-	constructor(rootElementId) {
+	constructor(rootElementId, dbReference) {
 		this.rootElement = document.getElementById(rootElementId);
 		if (!this.rootElement) {
 			console.error(`Root element with ID '${rootElementId}' not found.`);
 			return;
 		}
+		this.databaseService = dbReference; // Reference to the database service
+
+		// --- NEW: Properties to manage selection state ---
+		this.selectedRowKey = null; // Stores the key (number) of the currently selected row
+		this.selectedColKey = null; // Stores the key (string/number) of the currently selected column
+		this.activeSelectionType = null; // 'row' | 'col' | null - indicates what's currently selected
 
 		this.activeSheetName = null;
 		this.sheetColList = []; // Stores current UI's column names
 		this.currentInMemorySpreadsheet = null; // Holds the active Spreadsheet (AVL of AVL) instance
+	}
 
-		this.#renderBaseUI();
+	/**
+	 * Renders the initial,Complete Start UI of the application.
+	 */
+	async initializeUI() {
+		await this.#renderBaseUI();
 		this.#attachGlobalEventListeners();
 		this.openSidePanel();
 	}
@@ -24,7 +32,7 @@ class SpreadsheetUI {
 	 * Renders the initial, base UI structure of the application.
 	 * @private
 	 */
-	#renderBaseUI() {
+	async #renderBaseUI() {
 		this.rootElement.innerHTML = `
             <div id="sidepanel-items" class="sidepanel">
                 <div id="options">
@@ -251,7 +259,7 @@ class SpreadsheetUI {
 	async handleDbDumpFile(event) {
 		try {
 			const file = event.target.files[0];
-			await databaseService.loadDump(file);
+			await this.databaseService.loadDump(file);
 			this.renderSheetsNames();
 			this.openSidePanel();
 		} catch (error) {
@@ -270,7 +278,7 @@ class SpreadsheetUI {
 		reader.readAsText(file);
 		reader.onload = (e) => {
 			try {
-				databaseService.runSchema(e.target.result);
+				this.databaseService.runSchema(e.target.result);
 				this.renderSheetsNames();
 				this.openSidePanel();
 			} catch (error) {
@@ -291,7 +299,7 @@ class SpreadsheetUI {
 		}
 		console.log("Executing query:", query);
 		try {
-			const res = databaseService.runQuery(query);
+			const res = this.databaseService.runQuery(query);
 			const output = document.getElementById("user-select");
 			output.innerHTML = ""; // Clear previous output
 
@@ -339,6 +347,27 @@ class SpreadsheetUI {
 	}
 
 	/**
+	 * Converts a 1-based integer index to its corresponding spreadsheet column name (A, B, C, ..., AA, AB).
+	 * @param {number} index - The 1-based column index.
+	 * @returns {string} The spreadsheet column name.
+	 * @private
+	 */
+	#toColumnName(index) {
+		let name = "";
+		while (index > 0) {
+			let rem = index % 26;
+			if (rem === 0) {
+				name = "Z" + name;
+				index = index / 26 - 1;
+			} else {
+				name = String.fromCharCode(65 + rem - 1) + name;
+				index = Math.floor(index / 26);
+			}
+		}
+		return name;
+	}
+
+	/**
 	 * Initiates the creation of a new in-memory spreadsheet and prepares the UI.
 	 * This does NOT immediately save to the database.
 	 */
@@ -366,9 +395,13 @@ class SpreadsheetUI {
 		// Populate the in-memory spreadsheet with empty cells (optional, but good for UI consistency)
 		const newColList = [];
 		newColList.push("c0"); // Primary key column
+
+		// --- UPDATED LOGIC FOR COLUMN NAMING ---
 		for (let i = 1; i < columns; i++) {
-			newColList.push(String.fromCharCode(65 + i - 1)); // A, B, C...
+			// Use the new helper function for naming all subsequent columns
+			newColList.push(this.#toColumnName(i));
 		}
+
 		this.sheetColList = newColList; // Update UI's column list
 
 		// Render UI based on this in-memory structure
@@ -376,6 +409,7 @@ class SpreadsheetUI {
 		this.#renderColHead(tempSheetName, newColList);
 		this.#renderSheetFeatures(tempSheetName, newColList, true); // Pass true to show 'Save to DB' button
 		this.#addResizing();
+		this.#clearSelection();
 
 		// Populate UI with empty rows without hitting DB yet
 		const tableBody = document.getElementById(`${tempSheetName}-data-input`);
@@ -439,8 +473,6 @@ class SpreadsheetUI {
 		);
 	}
 
-	// ... (renderDbDumpInput, renderSchemaInput, renderSQLInput, handleDbDumpFile, handleSchemaFile, executeUserQuery - NO CHANGES) ...
-
 	/**
 	 * Renders the UI for a specific spreadsheet (table) from the database.
 	 * This will clear any active in-memory spreadsheet.
@@ -448,6 +480,8 @@ class SpreadsheetUI {
 	 */
 	async renderSheet(sheetName) {
 		this.closeSidePanel();
+		this.#clearSelection(); // Clear any existing selection when loading new sheet
+
 		this.activeSheetName = sheetName;
 		this.currentInMemorySpreadsheet = null; // Clear in-memory spreadsheet when loading from DB
 
@@ -470,14 +504,20 @@ class SpreadsheetUI {
 			tableHeader.innerHTML = ""; // Clear existing headers
 			this.sheetColList = []; // Clear current UI column list
 
-			const tableInfo = await databaseService.getTableInfo(sheetName);
+			const tableInfo = await this.databaseService.getTableInfo(sheetName);
 			tableInfo.forEach((colInfo) => {
 				const colName = colInfo[1]; // colInfo[1] is the column name
 				this.sheetColList.push(colName);
+
 				const headerDesc = document.createElement("th");
 				headerDesc.innerHTML = `${colName}`;
-				const div = document.createElement("div");
 				headerDesc.classList.add(`${colName}`); // Apply class for resizing
+
+				// --- NEW: Attach click listener for column selection ---
+				headerDesc.dataset.colKey = colName; // Store column key in dataset
+				headerDesc.addEventListener("click", () => this.selectColumn(colName));
+
+				const div = document.createElement("div");
 				div.classList.add(`${colName}_resize`);
 				div.classList.add(`resize`);
 				headerDesc.appendChild(div);
@@ -506,10 +546,16 @@ class SpreadsheetUI {
 			colNames.forEach((colName) => {
 				const headerDesc = document.createElement("th");
 				headerDesc.innerHTML = `${colName}`;
-				const div = document.createElement("div");
 				headerDesc.classList.add(colName); // Apply class for resizing
+
+				// --- NEW: Attach click listener for column selection ---
+				headerDesc.dataset.colKey = colName; // Store column key in dataset
+				headerDesc.addEventListener("click", () => this.selectColumn(colName));
+
+				const div = document.createElement("div");
 				div.classList.add(`${colName}_resize`);
 				div.classList.add(`resize`);
+
 				headerDesc.appendChild(div);
 				tableHeader.appendChild(headerDesc);
 			});
@@ -580,62 +626,60 @@ class SpreadsheetUI {
 	 * @param {string} sheetName - The name of the sheet to render data for.
 	 * @private
 	 */
+	/**
+	 * Renders the table data by fetching it from the database AND attaches click listeners for row headers.
+	 * @param {string} sheetName - The name of the sheet to render data for.
+	 * @private
+	 */
 	async #renderTableData(sheetName) {
 		const dataInput = document.getElementById(`${sheetName}-data-input`);
-		dataInput.innerHTML = ""; // Clear existing data
+		dataInput.innerHTML = "";
 
 		try {
 			const result = await databaseService.selectAllFromTable(sheetName);
 			if (result) {
 				result.values.forEach((row) => {
-					const tableRow = document.createElement("tr");
+					const tableRow = document.createElement("tr"); // Each <tr> represents a row
 					row.forEach((col, colId) => {
 						const tableCol = document.createElement("td");
-						// Assuming the first column (colId 0) is always the row ID and not editable
 						if (colId !== 0) {
-							tableCol.innerHTML = "";
-
+							// Editable data cells
 							const inputContainer = document.createElement("div");
 							inputContainer.className = "container";
-
 							const input = document.createElement("input");
-
-							input.className = `${result.columns[colId]} input-cell`; // Dynamic class from DB column name
+							input.className = `${result.columns[colId]} input-cell`;
 							input.type = "text";
-							input.name = sheetName; // Sheet name as the form 'name'
-							input.value = col; // Current cell value from DB
-
-							// --- IMPORTANT: Attach the oninput event listener programmatically ---
-							// Use an arrow function to maintain 'this' context, and pass all necessary arguments.
-							// The 'isInMemory' parameter is 'false' here because this data comes from the DB.
-							input.addEventListener("input", (event) => {
+							input.name = sheetName;
+							input.value = col;
+							input.dataset.rowno = row[0];
+							input.dataset.colname = result.columns[colId];
+							input.dataset.isinmemory = false;
+							input.addEventListener("input", (event) =>
 								this.handleInputChange(
 									event,
 									row[0],
 									result.columns[colId],
 									false
-								);
-							});
-
-							// Optional but recommended: Store dynamic data in dataset attributes
-							input.dataset.rowno = row[0];
-							input.dataset.colname = result.columns[colId];
-							input.dataset.isinmemory = false; // Mark as DB-backed data
+								)
+							);
 
 							const dropdownList = document.createElement("ul");
-
 							dropdownList.type = "none";
-							dropdownList.id = `${sheetName}-${result.columns[colId]}-dropdown`; // Dynamic ID
-							dropdownList.className = "dropdown"; // Set the class
+							dropdownList.id = `${sheetName}-${result.columns[colId]}-dropdown`;
+							dropdownList.className = "dropdown";
 
 							inputContainer.appendChild(input);
 							inputContainer.appendChild(dropdownList);
-
 							tableCol.appendChild(inputContainer);
-
 							tableCol.classList.add(`${result.columns[colId]}`);
 						} else {
+							// Row number cell (c0) - make it clickable for row selection
 							tableCol.innerHTML = `${col}`;
+							tableCol.classList.add(result.columns[colId]); // Add c0 class for styling/selection
+
+							// --- NEW: Attach click listener for row selection ---
+							tableCol.dataset.rowKey = row[0]; // Store row key in dataset
+							tableCol.addEventListener("click", () => this.selectRow(row[0]));
 						}
 						tableRow.appendChild(tableCol);
 					});
@@ -656,116 +700,73 @@ class SpreadsheetUI {
 	 * @private
 	 */
 	#renderSheetFeatures(sheetName, sheetColList, isInMemory) {
-		// 1. Get a reference to the parent element where you want to insert this UI.
 		const restInput = document.getElementById("rest-all-input");
-
-		// 2. Clear any existing content in that space.
-		restInput.innerHTML = "";
-
-		// 3. Create the main container <div> with inline style
-		const mainContainerDiv = document.createElement("div");
-		mainContainerDiv.style.margin = "10px 0px";
-		mainContainerDiv.style.display = "flex";
-		mainContainerDiv.style.flexDirection = "row";
-
-		// 4. Create the inner <div> for row input and insert button
-		const rowInputContainerDiv = document.createElement("div");
-
-		// 5. Create the 'Enter Row Count' input
-		const rowCountInput = document.createElement("input");
-		rowCountInput.type = "number";
-		rowCountInput.id = `${sheetName}-row-input`; // Dynamic ID
-		rowCountInput.placeholder = "Enter Row Count.";
-		rowInputContainerDiv.appendChild(rowCountInput);
-
-		// 6. Create the 'Insert Empty Rows' button
-		const insertRowsButton = document.createElement("button");
-		insertRowsButton.textContent = "Insert Empty Rows";
-		insertRowsButton.id = "insertRowsBtn"; // Unique ID
-		insertRowsButton.style.marginLeft = "10px";
-
-		// Store dynamic data in dataset attributes for the button
-		// This allows the event listener to retrieve the data without needing complex closure capturing
-		insertRowsButton.dataset.sheetName = sheetName;
-		insertRowsButton.dataset.colList = Array.isArray(sheetColList)
+		const colListString = Array.isArray(sheetColList)
 			? sheetColList.join(",")
-			: ""; // Ensure it's a string
-		insertRowsButton.dataset.isInMemory = isInMemory.toString(); // Convert boolean to string for dataset
+			: "";
 
-		// Attach the event listener programmatically
-		insertRowsButton.addEventListener("click", (event) => {
-			// Retrieve values from the button's dataset
-			const btn = event.currentTarget; // Use currentTarget as listener is on the button itself
-			const currentSheetName = btn.dataset.sheetName;
-			const currentColListString = btn.dataset.colList;
-			const currentIsInMemory = btn.dataset.isInMemory === "true"; // Convert string back to boolean
+		const saveToDbButton = isInMemory
+			? `<button id="saveToDbBtn" style="margin-left: 10px">
+                Save '${sheetName}' to DB
+            </button>`
+			: "";
 
-			this.insertRows(
-				currentSheetName,
-				currentColListString,
-				currentIsInMemory
-			);
-		});
-		rowInputContainerDiv.appendChild(insertRowsButton);
+		restInput.innerHTML = `
+            <div style="margin: 10px 0px; display:flex; flex-direction:row;">
+                <div>
+                    <input type="number" class="append-rows" id="${sheetName}-row-input" placeholder="Enter Row Count."/>
+                    <button id="insertRowsBtn" data-sheet-name="${sheetName}" data-col-list="${colListString}" data-is-in-memory="${isInMemory}" style="margin-left: 10px">Insert Empty Rows</button>
+                </div>
+                ${saveToDbButton}
+                <button id="saveJsonBtn" data-sheet-name="${sheetName}" style="margin-left: 10px">
+                  Save JSON
+                </button>
+                <input type="file" id="loadJsonFileInput" data-sheet-name="${sheetName}" style="margin-left: 10px" />
+                <button id="generateDbDumpBtn" data-sheet-name="${sheetName}" style="margin-left: 10px">
+                  Generate DB dump
+                </button>
 
-		// Append the row input container to the main container
-		mainContainerDiv.appendChild(rowInputContainerDiv);
-
-		// 7. Conditionally create the 'Save to DB' button
+                <div style="margin-left: 20px; display: flex; align-items: center;">
+                    <label for="colorPicker-${sheetName}">Cell Color:</label>
+                    <input type="color" id="colorPicker-${sheetName}" value="#ffffff" style="margin-left: 5px;">
+                    <button id="applyColorBtn-${sheetName}" style="margin-left: 5px;">Apply Color</button>
+                </div>
+            </div>`;
+		// Attach event listeners for these dynamically rendered buttons
 		if (isInMemory) {
-			const saveToDbButton = document.createElement("button");
-			saveToDbButton.textContent = `Save '${sheetName}' to DB`;
-			saveToDbButton.id = "saveToDbBtn"; // Unique ID
-			saveToDbButton.style.marginLeft = "10px";
-
-			// Attach the event listener programmatically
-			saveToDbButton.addEventListener("click", () => {
-				this.saveInMemorySpreadsheetToDb();
-			});
-			mainContainerDiv.appendChild(saveToDbButton);
+			document
+				.getElementById("saveToDbBtn")
+				?.addEventListener("click", () => this.saveInMemorySpreadsheetToDb());
 		}
+		document
+			.getElementById("insertRowsBtn")
+			?.addEventListener("click", (event) => {
+				const btn = event.target;
+				this.insertRows(
+					btn.dataset.sheetName,
+					btn.dataset.colList,
+					btn.dataset.isInMemory === "true"
+				);
+			});
+		document
+			.getElementById("saveJsonBtn")
+			?.addEventListener("click", (event) => this.saveJson(event));
+		document
+			.getElementById("loadJsonFileInput")
+			?.addEventListener("change", (event) => this.loadJson(event));
+		document
+			.getElementById("generateDbDumpBtn")
+			?.addEventListener("click", (event) => this.handleGenerateDBdump(event));
 
-		// 8. Create the 'Save JSON' button
-		const saveJsonButton = document.createElement("button");
-		saveJsonButton.textContent = "Save JSON";
-		saveJsonButton.id = "saveJsonBtn"; // Unique ID
-		saveJsonButton.style.marginLeft = "10px";
-		saveJsonButton.dataset.sheetName = sheetName; // Store sheetName in dataset
-
-		// Attach the event listener programmatically
-		saveJsonButton.addEventListener("click", (event) => {
-			this.saveJson(event); // Pass the event object directly
-		});
-		mainContainerDiv.appendChild(saveJsonButton);
-
-		// 9. Create the 'Load JSON' file input
-		const loadJsonInput = document.createElement("input");
-		loadJsonInput.type = "file";
-		loadJsonInput.id = "loadJsonFileInput"; // Unique ID
-		loadJsonInput.style.marginLeft = "10px";
-		loadJsonInput.dataset.sheetName = sheetName; // Store sheetName in dataset
-
-		// Attach the event listener programmatically
-		loadJsonInput.addEventListener("change", (event) => {
-			this.loadJson(event); // Pass the event object directly
-		});
-		mainContainerDiv.appendChild(loadJsonInput);
-
-		// 10. Create the 'Generate DB dump' button
-		const generateDbDumpButton = document.createElement("button");
-		generateDbDumpButton.textContent = "Generate DB dump";
-		generateDbDumpButton.id = "generateDbDumpBtn"; // Unique ID
-		generateDbDumpButton.style.marginLeft = "10px";
-		generateDbDumpButton.dataset.sheetName = sheetName; // Store sheetName in dataset
-
-		// Attach the event listener programmatically
-		generateDbDumpButton.addEventListener("click", (event) => {
-			this.handleGenerateDBdump(event); // Pass the event object directly
-		});
-		mainContainerDiv.appendChild(generateDbDumpButton);
-
-		// 11. Append the entire constructed main container to the restInput area.
-		restInput.appendChild(mainContainerDiv);
+		// --- NEW: Attach listener for Apply Color button ---
+		document
+			.getElementById(`applyColorBtn-${sheetName}`)
+			?.addEventListener("click", () => {
+				const selectedColor = document.getElementById(
+					`colorPicker-${sheetName}`
+				).value;
+				this.applyBackgroundColor(selectedColor);
+			});
 	}
 
 	/**
@@ -800,7 +801,7 @@ class SpreadsheetUI {
 			startRowId = maxKey + 1;
 		} else if (!isInMemory) {
 			try {
-				const metadata = await databaseService.getTableMetadata(sheetName);
+				const metadata = await this.databaseService.getTableMetadata(sheetName);
 				if (metadata && metadata.max_id !== null) {
 					startRowId = parseInt(metadata.max_id, 10) + 1;
 				}
@@ -819,19 +820,56 @@ class SpreadsheetUI {
 			for (let j = 0; j < colCount; j++) {
 				const tableCol = document.createElement("td");
 				if (j !== 0) {
-					// For editable data cells
-					tableCol.innerHTML = `
-                        <div class="container">
-                            <input class="${columnsArray[j]} input-cell"
-                                type="text"
-                                name="${sheetName}"
-                                oninput="spreadsheetUI.handleInputChange(event, ${currentRowId}, '${columnsArray[j]}', ${isInMemory})" value="" />
-                            <ul type="none" id="${sheetName}-${columnsArray[j]}-dropdown" class="dropdown"></ul>
-                        </div>`;
+					tableCol.innerHTML = "";
+
+					const inputContainer = document.createElement("div");
+					inputContainer.className = "container";
+
+					const input = document.createElement("input");
+
+					input.className = `${columnsArray[j]} input-cell`; // Dynamic class from column name
+					input.type = "text";
+					input.name = sheetName; // Sheet name as the form 'name'
+					input.value = ""; // Initial empty value for new rows
+
+					// --- IMPORTANT: Attach the oninput event listener programmatically ---
+					// Use an arrow function to maintain 'this' context, and pass all necessary arguments.
+					input.addEventListener("input", (event) => {
+						// Pass the original boolean 'isInMemory' directly
+						this.handleInputChange(
+							event,
+							currentRowId,
+							columnsArray[j],
+							isInMemory
+						);
+					});
+
+					// Optional but recommended: Store dynamic data in dataset attributes
+					input.dataset.rowno = currentRowId;
+					input.dataset.colname = columnsArray[j];
+					input.dataset.isinmemory = isInMemory.toString(); // Dataset values are strings, convert boolean to string
+
+					const dropdownList = document.createElement("ul");
+
+					dropdownList.type = "none"; // 'none' as string for type attribute
+					dropdownList.id = `${sheetName}-${columnsArray[j]}-dropdown`; // Dynamic ID
+					dropdownList.className = "dropdown"; // Set the class
+
+					inputContainer.appendChild(input);
+					inputContainer.appendChild(dropdownList);
+
+					tableCol.appendChild(inputContainer);
+
 					tableCol.classList.add(columnsArray[j]);
 				} else {
 					// For the non-editable row ID column
 					tableCol.innerHTML = `${currentRowId}`;
+
+					// --- NEW: Attach click listener for row selection ---
+					tableCol.dataset.rowKey = currentRowId; // Store row key in dataset
+					tableCol.addEventListener("click", () =>
+						this.selectRow(currentRowId)
+					);
 				}
 				bodyRow.appendChild(tableCol);
 			}
@@ -880,7 +918,7 @@ class SpreadsheetUI {
 				query += valuesToInsert.join(", ") + ";";
 
 				try {
-					await databaseService.runQuery(query);
+					await this.databaseService.runQuery(query);
 				} catch (error) {
 					alert(
 						`Error Inserting Data into DB at iteration ${
@@ -922,7 +960,7 @@ class SpreadsheetUI {
 
 		// --- Database-backed update logic (copied from previous version) ---
 		try {
-			const foreignKeysResult = await databaseService.getForeignKeyList(
+			const foreignKeysResult = await this.databaseService.getForeignKeyList(
 				sheetName
 			);
 			let referringTable = "";
@@ -948,7 +986,8 @@ class SpreadsheetUI {
 					relatedValuesQuery = `SELECT ${referringColumns
 						.map((c) => `"${c}"`)
 						.join(", ")} FROM "${sheetName}" WHERE c0 = ${rowno}`;
-					relatedValuesResult = databaseService.runQuery(relatedValuesQuery);
+					relatedValuesResult =
+						this.databaseService.runQuery(relatedValuesQuery);
 				}
 
 				let dropdownQuery = `SELECT DISTINCT("${colname}") FROM "${referringTable}" WHERE`;
@@ -962,7 +1001,7 @@ class SpreadsheetUI {
 				}
 				dropdownQuery += ` "${colname}" LIKE "%${value}%" LIMIT 10;`;
 
-				const dropdownResult = databaseService.runQuery(dropdownQuery);
+				const dropdownResult = this.databaseService.runQuery(dropdownQuery);
 				dropdown.innerHTML = "";
 
 				if (dropdownResult && dropdownResult.values.length > 0) {
@@ -975,7 +1014,7 @@ class SpreadsheetUI {
 							dropdown.style.display = "none";
 							event.target.value = e.target.id;
 							try {
-								await databaseService.runQuery(
+								await this.databaseService.runQuery(
 									`UPDATE "${sheetName}" SET "${colname}" = "${e.target.id}" WHERE c0 = ${rowno};`
 								);
 							} catch (updateError) {
@@ -993,7 +1032,7 @@ class SpreadsheetUI {
 				}
 			} else {
 				// No foreign key relationship, simply update the cell in DB
-				await databaseService.runQuery(
+				await this.databaseService.runQuery(
 					`UPDATE "${sheetName}" SET "${colname}" = "${value}" WHERE c0 = ${rowno};`
 				);
 				dropdown.style.display = "none";
@@ -1037,7 +1076,7 @@ class SpreadsheetUI {
 			});
 			createTableQuery += `);`;
 
-			await databaseService.runQuery(createTableQuery);
+			this.databaseService.runQuery(createTableQuery);
 			console.log(`Table '${newDbSheetName}' created in DB.`);
 
 			// 2. Iterate through the in-memory spreadsheet and insert data into the new DB table
@@ -1075,7 +1114,7 @@ class SpreadsheetUI {
 
 					if (batchValues.length > 0) {
 						insertQuery += batchValues.join(", ") + ";";
-						await databaseService.runQuery(insertQuery);
+						await this.databaseService.runQuery(insertQuery);
 					}
 				}
 			}
@@ -1097,7 +1136,7 @@ class SpreadsheetUI {
 	 */
 	async handleGenerateDBdump(event) {
 		try {
-			const dump = await databaseService.exportDb();
+			const dump = await this.databaseService.exportDb();
 			const dumpBlob = new Blob([dump], { type: "application/octet-stream" });
 			const dumpUrl = URL.createObjectURL(dumpBlob);
 
@@ -1121,7 +1160,7 @@ class SpreadsheetUI {
 	async saveJson(event) {
 		const sheetName = event.target.name;
 		try {
-			const res = await databaseService.selectAllFromTable(sheetName);
+			const res = await this.databaseService.selectAllFromTable(sheetName);
 			if (res) {
 				const jsonData = JSON.stringify(res, null, 2); // Pretty print JSON
 				const blob = new Blob([jsonData], { type: "application/json" });
@@ -1178,7 +1217,9 @@ class SpreadsheetUI {
 				let tableExists = false;
 
 				try {
-					const metadata = await databaseService.getTableMetadata(sheetName);
+					const metadata = await this.databaseService.getTableMetadata(
+						sheetName
+					);
 					if (metadata) {
 						db_col_count = metadata.column_count;
 						nextRowId = parseInt(metadata.max_id, 10) + 1;
@@ -1219,7 +1260,7 @@ class SpreadsheetUI {
 						nextRowId++;
 
 						try {
-							await databaseService.runQuery(query);
+							await this.databaseService.runQuery(query);
 						} catch (error) {
 							alert(
 								`Error while inserting Data from file into existing table at row ${
@@ -1246,7 +1287,7 @@ class SpreadsheetUI {
 					createTableQuery += `);`;
 
 					try {
-						await databaseService.runQuery(createTableQuery);
+						await this.databaseService.runQuery(createTableQuery);
 					} catch (error) {
 						console.error("Error creating new table for JSON import:", error);
 						alert("Error creating new table for JSON import.");
@@ -1280,7 +1321,7 @@ class SpreadsheetUI {
 						currentIdForNewTable++;
 
 						try {
-							await databaseService.runQuery(query);
+							await this.databaseService.runQuery(query);
 						} catch (error) {
 							alert(
 								`Error while inserting Data from file into new table at row ${
@@ -1309,7 +1350,7 @@ class SpreadsheetUI {
 		sheetList.innerHTML = ""; // Clear existing list
 
 		try {
-			const tableNames = await databaseService.getTableNames();
+			const tableNames = await this.databaseService.getTableNames();
 			if (tableNames.length > 0) {
 				tableNames.forEach((tableName) => {
 					const anch = document.createElement("a");
@@ -1331,6 +1372,149 @@ class SpreadsheetUI {
 	}
 
 	/**
+	 * Handles selection of a row.
+	 * @param {number} rowKey - The key of the row to select.
+	 */
+	selectRow(rowKey) {
+		// If the same row is clicked again, deselect it
+		if (this.activeSelectionType === "row" && this.selectedRowKey === rowKey) {
+			this.#clearSelection();
+		} else {
+			this.#clearSelection(); // Clear any previous selection (row or column)
+			this.selectedRowKey = rowKey;
+			this.activeSelectionType = "row";
+			this.#highlightSelection();
+		}
+	}
+
+	/**
+	 * Handles selection of a column.
+	 * @param {string} colKey - The key of the column to select.
+	 */
+	selectColumn(colKey) {
+		// If the same column is clicked again, deselect it
+		if (this.activeSelectionType === "col" && this.selectedColKey === colKey) {
+			this.#clearSelection();
+		} else {
+			this.#clearSelection(); // Clear any previous selection (row or column)
+			this.selectedColKey = colKey;
+			this.activeSelectionType = "col";
+			this.#highlightSelection();
+		}
+	}
+
+	/**
+	 * Clears all current selection highlights.
+	 * @private
+	 */
+	#clearSelection() {
+		// Remove 'selected-row' class from all rows (TRs)
+		document
+			.querySelectorAll(".selected-row")
+			.forEach((tr) => tr.classList.remove("selected-row"));
+
+		// Remove 'selected-col' class from all elements that might have it (THs and TDs)
+		if (this.sheetColList && this.sheetColList.length > 0) {
+			this.sheetColList.forEach((colClass) => {
+				console.log(colClass);
+				document
+					.querySelectorAll(`.${colClass}`)
+					.forEach((el) => el.classList.remove("selected-col"));
+			});
+		}
+
+		// Reset internal selection state
+		this.selectedRowKey = null;
+		this.selectedColKey = null;
+		this.activeSelectionType = null;
+	}
+
+	/**
+	 * Applies CSS classes to highlight the currently selected row or column.
+	 * @private
+	 */
+	#highlightSelection() {
+		if (!this.activeSheetName) return; // No active sheet to highlight on
+
+		if (this.activeSelectionType === "row" && this.selectedRowKey !== null) {
+			const tableBody = document.getElementById(
+				`${this.activeSheetName}-data-input`
+			);
+			if (tableBody) {
+				// Find the <tr> element that contains the selected row key
+				const selectedRowElement = Array.from(tableBody.children).find((tr) => {
+					// Assuming the first TD (c0) contains the row number
+					const rowIdCell = tr.children[0];
+					return (
+						rowIdCell &&
+						parseInt(rowIdCell.textContent, 10) === this.selectedRowKey
+					);
+				});
+				if (selectedRowElement) {
+					selectedRowElement.classList.add("selected-row");
+				}
+			}
+		} else if (
+			this.activeSelectionType === "col" &&
+			this.selectedColKey !== null
+		) {
+			// Select all elements (TH and TD) that have the column's class
+			document.querySelectorAll(`.${this.selectedColKey}`).forEach((el) => {
+				el.classList.add("selected-col");
+			});
+		}
+	}
+
+	/**
+	 * Applies a background color to the currently selected row or column.
+	 * @param {string} color - The CSS color string (e.g., "#FF0000", "blue").
+	 */
+	applyBackgroundColor(color) {
+		if (!this.activeSelectionType) {
+			alert("Please select a row or column first to apply color.");
+			return;
+		}
+
+		if (this.activeSelectionType === "row" && this.selectedRowKey !== null) {
+			const tableBody = document.getElementById(
+				`${this.activeSheetName}-data-input`
+			);
+			if (tableBody) {
+				const selectedRowElement = Array.from(tableBody.children).find((tr) => {
+					const rowIdCell = tr.children[0];
+					return (
+						rowIdCell &&
+						parseInt(rowIdCell.textContent, 10) === this.selectedRowKey
+					);
+				});
+				if (selectedRowElement) {
+					Array.from(selectedRowElement.children).forEach((cell) => {
+						cell.style.backgroundColor = color;
+					});
+				}
+			}
+		} else if (
+			this.activeSelectionType === "col" &&
+			this.selectedColKey !== null
+		) {
+			document.querySelectorAll(`.${this.selectedColKey}`).forEach((el) => {
+				// Apply color only to actual table cells (TH and TD)
+				if (el.tagName === "TD" || el.tagName === "TH") {
+					el.style.backgroundColor = color;
+				}
+			});
+		}
+		this.#clearSelection(); // Clear selection after applying color
+		alert(
+			`Background color applied to ${this.activeSelectionType} ${
+				this.activeSelectionType === "row"
+					? this.selectedRowKey
+					: this.selectedColKey
+			}.`
+		);
+	}
+
+	/**
 	 * Opens the side panel.
 	 */
 	openSidePanel() {
@@ -1344,6 +1528,3 @@ class SpreadsheetUI {
 		document.getElementById("sidepanel-items").style.width = "0";
 	}
 }
-
-// Export a single instance of the SpreadsheetUI class
-export const spreadsheetUI = new SpreadsheetUI("root");

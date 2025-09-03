@@ -5,8 +5,10 @@ async function initializeApp() {
 		const databaseService = new DatabaseService();
 		await databaseService.initialize();
 
-		const spreadsheetUI = await new SpreadsheetUI("root", databaseService);
-		await spreadsheetUI.initializeUI();
+		const backEndService = new BackendService(databaseService);
+
+		const spreadsheetUI = new SpreadsheetUI("root", backEndService);
+		spreadsheetUI.initializeUI();
 
 		console.log("Application initialized successfully.");
 	} catch (error) {

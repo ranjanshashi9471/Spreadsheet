@@ -30,12 +30,29 @@ class DatabaseService {
 			this.SQL = await initSqlJs();
 			this.db = new this.SQL.Database();
 
+			// Ensure the sheets table exists
 			this.runSchema(`
 				CREATE TABLE IF NOT EXISTS sheets (
-					sheet_id INTEGER PRIMARY KEY,
+					sheet_id INTEGER PRIMARY KEY AUTOINCREMENT,
 					sheet_name TEXT
 				);
-			`); // Ensure the sheets table exists
+
+				PRAGMA foreign_keys = ON;
+
+				CREATE TABLE IF NOT EXISTS sheet_columns (
+					sheet_id INTEGER PRIMARY KEY,
+					column_name TEXT
+				);
+
+				CREATE TABLE IF NOT EXISTS sheet_data (
+					sheet_id INTEGER,
+					col_id TEXT,
+					row_id TEXT,
+					cell_value TEXT,
+					cell_style TEXT,
+					PRIMARY KEY (sheet_id, col_id, row_id)
+				);
+			`);
 			console.log("Database created and initialized.");
 		} catch (error) {
 			console.error("Error initializing database:", error);

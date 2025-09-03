@@ -5,9 +5,10 @@
  * Stores the row key and its corresponding cell value.
  */
 class RowNode {
-	constructor(rowKey, cellValue) {
+	constructor(rowKey, cellValue, style) {
 		this.key = rowKey;
 		this.value = cellValue;
+		this.style = style;
 		this.left = null;
 		this.right = null;
 		this.height = 1;
@@ -21,7 +22,6 @@ class RowNode {
 class ColumnNode {
 	constructor(colKey) {
 		this.key = colKey;
-		this.name = null;
 		this.rows = null; // Root of the secondary AVL Tree for rows in this column
 		this.left = null;
 		this.right = null;
@@ -82,19 +82,22 @@ class AVLTree {
 	 * @param {Function} createNodeFn - The function to create a new node (e.g., ColumnNode or RowNode).
 	 * @returns {object} The root of the balanced subtree after insertion.
 	 */
-	_insert(node, key, value, createNodeFn) {
+	_insert(node, key, value, style, createNodeFn) {
 		if (!node) {
-			return createNodeFn(key, value);
+			return createNodeFn(key, value, style);
 		}
 
 		if (key < node.key) {
-			node.left = this._insert(node.left, key, value, createNodeFn);
+			node.left = this._insert(node.left, key, value, style, createNodeFn);
 		} else if (key > node.key) {
-			node.right = this._insert(node.right, key, value, createNodeFn);
+			node.right = this._insert(node.right, key, value, style, createNodeFn);
 		} else {
 			// If the key already exists, update its value (relevant for RowNodes)
 			if (value !== undefined) {
 				node.value = value;
+			}
+			if (style !== undefined) {
+				node.style = { ...style };
 			}
 			return node;
 		}
@@ -160,9 +163,8 @@ class Spreadsheet {
 	constructor(sheetName = "Sheet1") {
 		this.sheetName = sheetName;
 		this.columnTree = new AVLTree();
-		this.colCount = 0;
-		this.rowCount = 0; // Represents the number of unique rowKeys currently in the spreadsheet
-		this.uniqueRowKeys = new Set(); // Use a Set to track unique row keys efficiently
+		this.columns = [];
+		this.maxRows = 0;
 	}
 
 	/**
@@ -172,7 +174,7 @@ class Spreadsheet {
 	 * @param {*} colKey - The key identifying the column.
 	 * @param {*} cellValue - The value to store in the cell.
 	 */
-	insertData(rowKey, colKey, cellValue) {
+	insertData(rowKey, colKey, cellValue, style = {}) {
 		// Find or insert the column
 		let colNode = this.columnTree.find(colKey);
 		if (!colNode) {
@@ -180,10 +182,10 @@ class Spreadsheet {
 				this.columnTree.root,
 				colKey,
 				undefined,
+				undefined,
 				(key) => new ColumnNode(key)
 			);
 			colNode = this.columnTree.find(colKey); // Re-find after potential root change
-			this.colCount++;
 		}
 
 		// Insert or update the row within the found/created column
@@ -191,20 +193,12 @@ class Spreadsheet {
 			colNode.rows = new AVLTree();
 		}
 
-		const existingRowNode = colNode.rows.find(rowKey);
-		if (!existingRowNode) {
-			// Only increment rowCount and add to uniqueRowKeys if it's a new row entry across the sheet
-			if (!this.uniqueRowKeys.has(rowKey)) {
-				this.uniqueRowKeys.add(rowKey);
-				this.rowCount = this.uniqueRowKeys.size; // Update overall row count
-			}
-		}
-
 		colNode.rows.root = colNode.rows._insert(
 			colNode.rows.root,
 			rowKey,
 			cellValue,
-			(key, value) => new RowNode(key, value)
+			style,
+			(key, value, style) => new RowNode(key, value, style)
 		);
 	}
 
@@ -267,8 +261,5 @@ class Spreadsheet {
 	 */
 	clear() {
 		this.columnTree.root = null;
-		this.colCount = 0;
-		this.rowCount = 0;
-		this.uniqueRowKeys.clear();
 	}
 }

@@ -1,30 +1,38 @@
 // SpreadsheetUI.js (Updated)
 
 class SpreadsheetUI {
-	constructor(rootElementId, dbReference) {
+	constructor(rootElementId, backendReference) {
 		this.rootElement = document.getElementById(rootElementId);
 		if (!this.rootElement) {
 			console.error(`Root element with ID '${rootElementId}' not found.`);
 			return;
 		}
-		this.databaseService = dbReference; // Reference to the database service
+		this.spreadsheetService = backendReference; // Reference to the backend service
 
-		// --- NEW: Properties to manage selection state ---
-		this.selectedRowKey = null; // Stores the key (number) of the currently selected row
-		this.selectedColKey = null; // Stores the key (string/number) of the currently selected column
-		this.activeSelectionType = null; // 'row' | 'col' | null - indicates what's currently selected
+		this.selectedRowKeys = new Set();
+		this.selectedColKeys = new Set();
+		this.lastClickedRowKey = null;
+		this.lastClickedColKey = null;
+
+		this.isDragging = false;
+		this.dragStartRowKey = null;
+		this.dragStartColKey = null;
 
 		this.activeSheetName = null;
-		this.sheetColList = []; // Stores current UI's column names
-		this.currentInMemorySpreadsheet = null; // Holds the active Spreadsheet (AVL of AVL) instance
+		this.sheetColList = [];
+		this.currentInMemorySpreadsheet = null;
 	}
 
 	/**
 	 * Renders the initial,Complete Start UI of the application.
 	 */
-	async initializeUI() {
-		await this.#renderBaseUI();
+	initializeUI() {
+		this.#renderBaseUI();
 		this.#attachGlobalEventListeners();
+
+		document.addEventListener("mousemove", (e) => this.#handleDragMove(e));
+		document.addEventListener("mouseup", (e) => this.#handleDragEnd(e));
+
 		this.openSidePanel();
 	}
 
@@ -32,7 +40,7 @@ class SpreadsheetUI {
 	 * Renders the initial, base UI structure of the application.
 	 * @private
 	 */
-	async #renderBaseUI() {
+	#renderBaseUI() {
 		this.rootElement.innerHTML = `
             <div id="sidepanel-items" class="sidepanel">
                 <div id="options">
@@ -53,7 +61,6 @@ class SpreadsheetUI {
             <div id="user-select"></div>
         `;
 
-		// Attach event listeners for the permanent UI elements
 		document
 			.getElementById("closeSidePanelBtn")
 			?.addEventListener("click", () => this.closeSidePanel());
@@ -69,12 +76,9 @@ class SpreadsheetUI {
 		document
 			.getElementById("renderSQLInputBtn")
 			?.addEventListener("click", () => this.renderSQLInput());
-
-		// --- IMPORTANT: This is the specific part for your request ---
 		document
 			.getElementById("openSidePanelOpener")
 			?.addEventListener("click", () => this.openSidePanel());
-		// --- End of specific part ---
 	}
 
 	/**
@@ -83,6 +87,13 @@ class SpreadsheetUI {
 	 */
 	#attachGlobalEventListeners() {
 		document.addEventListener("keydown", (e) => this.#handleGlobalKeyDown(e));
+		document.addEventListener("click", (e) => {
+			if (!e.target.closest(".container")) {
+				document.querySelectorAll(".dropdown").forEach((dropdown) => {
+					dropdown.style.display = "none";
+				});
+			}
+		});
 	}
 
 	/**
@@ -94,42 +105,52 @@ class SpreadsheetUI {
 		const focused_element = document.activeElement;
 		if (
 			focused_element.tagName === "INPUT" &&
-			focused_element.parentElement.parentElement.tagName === "TD"
+			focused_element.classList.contains("input-cell")
 		) {
-			const cellIndex = focused_element.parentElement.parentElement.cellIndex;
-			const rowIndex =
-				focused_element.parentElement.parentElement.parentElement.rowIndex;
-			const table = document.getElementById("user-select");
-			if (!table || !table.firstElementChild) return; // Ensure table exists
-			const rows = table.firstElementChild.rows;
-
+			const cell = focused_element.parentElement.parentElement;
+			const row = cell.parentElement;
+			const tableBody = row.parentElement;
+			const rowIndex = Array.from(tableBody.children).indexOf(row);
+			const cellIndex = Array.from(row.children).indexOf(cell);
+			const getCellInput = (rIdx, cIdx) => {
+				const targetRow = tableBody.children[rIdx];
+				if (targetRow) {
+					const targetCell = targetRow.children[cIdx];
+					if (targetCell) {
+						return targetCell.querySelector("input.input-cell");
+					}
+				}
+				return null;
+			};
+			let nextInput = null;
 			switch (e.key) {
 				case "ArrowUp":
-					if (rowIndex > 1) {
-						// row 0 is thead, row 1 is the first data row
-						e.preventDefault(); // Prevent page scroll
-						rows[rowIndex - 1].cells[cellIndex].querySelector("input").focus();
+					if (rowIndex > 0) {
+						e.preventDefault();
+						nextInput = getCellInput(rowIndex - 1, cellIndex);
 					}
 					break;
 				case "ArrowDown":
-					if (rowIndex < rows.length - 1) {
-						e.preventDefault(); // Prevent page scroll
-						rows[rowIndex + 1].cells[cellIndex].querySelector("input").focus();
+					if (rowIndex < tableBody.children.length - 1) {
+						e.preventDefault();
+						nextInput = getCellInput(rowIndex + 1, cellIndex);
 					}
 					break;
 				case "ArrowLeft":
-					if (cellIndex > 0) {
-						// Cell 0 is row number, start from 1
-						e.preventDefault(); // Prevent page scroll
-						rows[rowIndex].cells[cellIndex - 1].querySelector("input").focus();
+					if (cellIndex > 1) {
+						e.preventDefault();
+						nextInput = getCellInput(rowIndex, cellIndex - 1);
 					}
 					break;
 				case "ArrowRight":
-					if (cellIndex < rows[rowIndex].cells.length - 1) {
-						e.preventDefault(); // Prevent page scroll
-						rows[rowIndex].cells[cellIndex + 1].querySelector("input").focus();
+					if (cellIndex < row.children.length - 1) {
+						e.preventDefault();
+						nextInput = getCellInput(rowIndex, cellIndex + 1);
 					}
 					break;
+			}
+			if (nextInput) {
+				nextInput.focus();
 			}
 		}
 	}
@@ -140,39 +161,24 @@ class SpreadsheetUI {
 	addNewSheetInput() {
 		const space = document.getElementById("rest-all-input");
 		space.innerHTML = "";
-
-		space.innerHTML = `
-            <div id="user-input"></div>`; // Renamed function for clarity
-
 		const userInputDiv = document.createElement("div");
 		userInputDiv.id = "user-input";
-
-		// 4. Create the 'user-rows' input element.
 		const rowsInput = document.createElement("input");
 		rowsInput.type = "number";
 		rowsInput.id = "user-rows";
 		rowsInput.placeholder = "Enter number of rows";
-		userInputDiv.appendChild(rowsInput); // Add it to the div
-
-		// 5. Create the 'user-columns' input element.
+		userInputDiv.appendChild(rowsInput);
 		const columnsInput = document.createElement("input");
 		columnsInput.type = "number";
 		columnsInput.id = "user-columns";
 		columnsInput.placeholder = "Enter number of columns (max 26)";
-		userInputDiv.appendChild(columnsInput); // Add it to the div
-
-		// 6. Create the <button> element.
+		userInputDiv.appendChild(columnsInput);
 		const createButton = document.createElement("button");
 		createButton.textContent = "Create New Sheet";
-
-		// 7. IMPORTANT: Attach the event listener programmatically.
-		//    'this' here refers to the instance of your SpreadsheetUI class.
 		createButton.addEventListener("click", () => {
 			this.startNewSpreadsheet();
 		});
-		userInputDiv.appendChild(createButton); // Add the button to the div
-
-		// 8. Append the entire new UI block to the designated space.
+		userInputDiv.appendChild(createButton);
 		space.appendChild(userInputDiv);
 		this.closeSidePanel();
 	}
@@ -182,27 +188,16 @@ class SpreadsheetUI {
 	 */
 	renderDbDumpInput() {
 		const space = document.getElementById("rest-all-input");
-		space.innerHTML = ""; // Clear previous content
-
-		// 1. Create the <input> element
+		space.innerHTML = "";
 		const fileInput = document.createElement("input");
-
-		// 2. Set its attributes
 		fileInput.name = "db-dump-input";
 		fileInput.type = "file";
-		fileInput.id = "dbDumpFileInput"; // Give it a unique ID for easier reference
-		fileInput.style.marginLeft = "10px"; // Set the style
-
-		// 3. IMPORTANT: Attach the event listener programmatically
-		//    'this' inside this method refers to the SpreadsheetUI instance.
-		//    So, we can directly call 'this.handleDbDumpFile(event)'.
+		fileInput.id = "dbDumpFileInput";
+		fileInput.style.marginLeft = "10px";
 		fileInput.addEventListener("change", (event) => {
 			this.handleDbDumpFile(event);
 		});
-
-		// 4. Append the created input element to the designated space
 		space.appendChild(fileInput);
-
 		this.closeSidePanel();
 	}
 
@@ -212,20 +207,15 @@ class SpreadsheetUI {
 	renderSchemaInput() {
 		const space = document.getElementById("rest-all-input");
 		space.innerHTML = "";
-
 		const fileInput = document.createElement("input");
 		fileInput.name = "schema-input";
 		fileInput.type = "file";
-		fileInput.id = "schemaFileInput"; // Give it a unique ID for easier reference
-		fileInput.style.marginLeft = "10px"; // Set the style
-		// 3. Attach the event listener programmatically
+		fileInput.id = "schemaFileInput";
+		fileInput.style.marginLeft = "10px";
 		fileInput.addEventListener("change", (event) => {
 			this.handleSchemaFile(event);
 		});
-
-		// 4. Append the created input element to the designated space
 		space.appendChild(fileInput);
-
 		this.closeSidePanel();
 	}
 
@@ -235,20 +225,17 @@ class SpreadsheetUI {
 	renderSQLInput() {
 		const space = document.getElementById("rest-all-input");
 		space.innerHTML = "";
-
 		const queryTextarea = document.createElement("textarea");
 		queryTextarea.rows = 5;
 		queryTextarea.cols = 40;
 		queryTextarea.id = "query-input";
 		queryTextarea.spellcheck = false;
 		queryTextarea.placeholder = "Enter your query";
-
+		space.appendChild(queryTextarea);
 		const submitButton = document.createElement("button");
 		submitButton.textContent = "Submit";
-		submitButton.onclick = () => this.executeUserQuery();
-
-		space.appendChild(queryTextarea);
 		space.appendChild(submitButton);
+		submitButton.addEventListener("click", () => this.executeUserQuery());
 		this.closeSidePanel();
 	}
 
@@ -259,7 +246,7 @@ class SpreadsheetUI {
 	async handleDbDumpFile(event) {
 		try {
 			const file = event.target.files[0];
-			await this.databaseService.loadDump(file);
+			await this.spreadsheetService.databaseService.loadDump(file);
 			this.renderSheetsNames();
 			this.openSidePanel();
 		} catch (error) {
@@ -276,9 +263,11 @@ class SpreadsheetUI {
 		const file = event.target.files[0];
 		const reader = new FileReader();
 		reader.readAsText(file);
-		reader.onload = (e) => {
+		reader.onload = async (e) => {
 			try {
-				this.databaseService.runSchema(e.target.result);
+				await this.spreadsheetService.databaseService.runSchema(
+					e.target.result
+				);
 				this.renderSheetsNames();
 				this.openSidePanel();
 			} catch (error) {
@@ -291,7 +280,7 @@ class SpreadsheetUI {
 	/**
 	 * Executes a user-provided SQL query and displays the results.
 	 */
-	executeUserQuery() {
+	async executeUserQuery() {
 		const query = document.getElementById("query-input").value;
 		if (!query.trim()) {
 			alert("Please enter an SQL query.");
@@ -299,12 +288,10 @@ class SpreadsheetUI {
 		}
 		console.log("Executing query:", query);
 		try {
-			const res = this.databaseService.runQuery(query);
+			const res = await this.spreadsheetService.databaseService.runQuery(query);
 			const output = document.getElementById("user-select");
-			output.innerHTML = ""; // Clear previous output
-
+			output.innerHTML = "";
 			if (res) {
-				// res is the result object from db.exec for SELECT queries
 				output.innerHTML = `
                     <table border="1">
                         <thead>
@@ -315,17 +302,13 @@ class SpreadsheetUI {
                     </table>`;
 				const header = document.getElementById("tmp_header");
 				const tbody = document.getElementById("tmp-data-output");
-
-				// Render header row
 				const headrow = document.createElement("tr");
 				res.columns.forEach((colName) => {
-					const th = document.createElement("th"); // Use th for header cells
+					const th = document.createElement("th");
 					th.innerHTML = colName;
 					headrow.appendChild(th);
 				});
 				header.appendChild(headrow);
-
-				// Render data rows
 				res.values.forEach((row) => {
 					const bodyrow = document.createElement("tr");
 					row.forEach((col) => {
@@ -336,9 +319,8 @@ class SpreadsheetUI {
 					tbody.appendChild(bodyrow);
 				});
 			} else {
-				// For DML (INSERT, UPDATE, DELETE) or DDL (CREATE, DROP) queries
 				alert("Query executed successfully (no data returned for display).");
-				this.renderSheetsNames(); // Refresh sheet list in case of DDL
+				this.renderSheetsNames();
 			}
 		} catch (error) {
 			alert(error.message || "Error Executing Query");
@@ -372,102 +354,77 @@ class SpreadsheetUI {
 	 * This does NOT immediately save to the database.
 	 */
 	async startNewSpreadsheet() {
-		// Renamed from renderNewSpreadsheet
 		const rowCountInput = document.getElementById("user-rows");
 		const colCountInput = document.getElementById("user-columns");
-
 		const rows = parseInt(rowCountInput.value, 10);
 		const columns = parseInt(colCountInput.value, 10);
-
 		if (isNaN(rows) || rows <= 0 || isNaN(columns) || columns <= 0) {
 			alert("Please enter valid positive numbers for rows and columns.");
 			return;
 		}
-		// if (columns > 26) {
-		// 	alert("Maximum 26 columns (A-Z) allowed for now.");
-		// 	return;
-		// }
 
 		const tempSheetName = `temp_sheet_${Math.floor(Math.random() * 100000)}`;
-		this.currentInMemorySpreadsheet = new Spreadsheet(tempSheetName); // Create in-memory instance
-		this.activeSheetName = tempSheetName; // Set active sheet to this temp name
-
-		// Populate the in-memory spreadsheet with empty cells (optional, but good for UI consistency)
-		const newColList = [];
-		newColList.push("c0"); // Primary key column
-
-		// --- UPDATED LOGIC FOR COLUMN NAMING ---
-		for (let i = 1; i < columns; i++) {
-			// Use the new helper function for naming all subsequent columns
+		this.currentInMemorySpreadsheet = new Spreadsheet(tempSheetName);
+		this.activeSheetName = tempSheetName;
+		const newColList = ["c0"];
+		for (let i = 1; i <= columns; i++) {
 			newColList.push(this.#toColumnName(i));
 		}
-
-		this.sheetColList = newColList; // Update UI's column list
-
-		// Render UI based on this in-memory structure
+		this.sheetColList = newColList;
 		this.#renderTableStructure(tempSheetName);
 		this.#renderColHead(tempSheetName, newColList);
-		this.#renderSheetFeatures(tempSheetName, newColList, true); // Pass true to show 'Save to DB' button
+		this.#renderSheetFeatures(tempSheetName, newColList, true);
 		this.#addResizing();
 		this.#clearSelection();
-
-		// Populate UI with empty rows without hitting DB yet
 		const tableBody = document.getElementById(`${tempSheetName}-data-input`);
-		tableBody.innerHTML = ""; // Clear existing content
+		tableBody.innerHTML = "";
 		for (let i = 0; i < rows; i++) {
+			const currentRowId = i + 1;
 			const bodyRow = document.createElement("tr");
 			for (let j = 0; j < newColList.length; j++) {
 				const tableCol = document.createElement("td");
 				if (j !== 0) {
 					const inputContainer = document.createElement("div");
-					inputContainer.className = "container"; // Set the class directly
-
+					inputContainer.className = "container";
 					const input = document.createElement("input");
-
-					input.className = `${newColList[j]} input-cell`; // Dynamic class
+					input.className = `${newColList[j]} input-cell`;
 					input.type = "text";
-					input.name = tempSheetName; // Dynamic name attribute
-					input.value = ""; // Initial empty value
-
-					// --- IMPORTANT: Attach the oninput event listener programmatically ---
-					// Use an arrow function to maintain 'this' context, and pass all necessary arguments.
-					input.addEventListener("input", (event) => {
-						this.handleInputChange(event, i + 1, newColList[j], true);
-					});
-
-					// Optional but recommended: Store dynamic data in dataset attributes
-					// This can simplify event handling if you need to access these values later
-					// without re-parsing the DOM from event.target.
-					input.dataset.rowno = i + 1;
+					input.name = tempSheetName;
+					input.value = "";
+					input.dataset.rowno = currentRowId;
 					input.dataset.colname = newColList[j];
-					input.dataset.isinmemory = true; // Use 'true' as a string for dataset, or convert later
-
+					input.dataset.isinmemory = true;
+					input.addEventListener("input", (event) => {
+						this.handleInputChange(event, currentRowId, newColList[j], true);
+					});
 					const dropdownList = document.createElement("ul");
-
 					dropdownList.type = "none";
-					dropdownList.id = `${tempSheetName}-${newColList[j]}-dropdown`; // Dynamic ID
-					dropdownList.className = "dropdown"; // Set the class
-
+					dropdownList.id = `${tempSheetName}-${newColList[j]}-dropdown`;
+					dropdownList.className = "dropdown";
 					inputContainer.appendChild(input);
 					inputContainer.appendChild(dropdownList);
-
 					tableCol.appendChild(inputContainer);
 					tableCol.classList.add(newColList[j]);
 				} else {
-					tableCol.innerHTML = `${i + 1}`; // Row number
+					tableCol.innerHTML = `${currentRowId}`;
+					tableCol.classList.add(newColList[j]);
 				}
 				bodyRow.appendChild(tableCol);
 			}
 			tableBody.appendChild(bodyRow);
-			// Also add to in-memory spreadsheet (optional, for consistency if you fetch from it)
-			// this.currentInMemorySpreadsheet.insertData(i + 1, 'c0', i + 1); // For the ID column
-			// for (let j = 1; j < newColList.length; j++) {
-			//     this.currentInMemorySpreadsheet.insertData(i + 1, newColList[j], "");
-			// }
+			this.currentInMemorySpreadsheet.insertData(
+				currentRowId,
+				"c0",
+				currentRowId
+			);
+			for (let j = 1; j < newColList.length; j++) {
+				this.currentInMemorySpreadsheet.insertData(
+					currentRowId,
+					newColList[j],
+					""
+				);
+			}
 		}
-
-		// Initially render sheet names, but don't add this temp sheet to the DB list yet.
-		// this.renderSheetsNames();
 		alert(
 			`New temporary spreadsheet '${tempSheetName}' created. Data will be in-memory until saved.`
 		);
@@ -480,55 +437,16 @@ class SpreadsheetUI {
 	 */
 	async renderSheet(sheetName) {
 		this.closeSidePanel();
-		this.#clearSelection(); // Clear any existing selection when loading new sheet
-
+		this.#clearSelection();
 		this.activeSheetName = sheetName;
-		this.currentInMemorySpreadsheet = null; // Clear in-memory spreadsheet when loading from DB
-
+		this.currentInMemorySpreadsheet = null;
 		this.#renderTableStructure(sheetName);
-		const cols = await this.#renderColHeadFromDb(sheetName);
-		this.#renderSheetFeatures(sheetName, cols, false); // Pass false, no 'Save to DB' button for DB sheets
+		const cols = await this.spreadsheetService.getTableInfo(sheetName);
+		this.sheetColList = cols.map((c) => c[1]);
+		this.#renderColHead(sheetName, this.sheetColList);
+		this.#renderSheetFeatures(sheetName, this.sheetColList, false);
 		await this.#renderTableData(sheetName);
 		this.#addResizing();
-	}
-
-	/**
-	 * Renders column headers from database schema.
-	 * @param {string} sheetName - The name of the sheet.
-	 * @returns {Promise<Array<string>>} A promise resolving to an array of column names.
-	 * @private
-	 */
-	async #renderColHeadFromDb(sheetName) {
-		try {
-			const tableHeader = document.getElementById(`${sheetName}_header`);
-			tableHeader.innerHTML = ""; // Clear existing headers
-			this.sheetColList = []; // Clear current UI column list
-
-			const tableInfo = await this.databaseService.getTableInfo(sheetName);
-			tableInfo.forEach((colInfo) => {
-				const colName = colInfo[1]; // colInfo[1] is the column name
-				this.sheetColList.push(colName);
-
-				const headerDesc = document.createElement("th");
-				headerDesc.innerHTML = `${colName}`;
-				headerDesc.classList.add(`${colName}`); // Apply class for resizing
-
-				// --- NEW: Attach click listener for column selection ---
-				headerDesc.dataset.colKey = colName; // Store column key in dataset
-				headerDesc.addEventListener("click", () => this.selectColumn(colName));
-
-				const div = document.createElement("div");
-				div.classList.add(`${colName}_resize`);
-				div.classList.add(`resize`);
-				headerDesc.appendChild(div);
-				tableHeader.appendChild(headerDesc);
-			});
-			return this.sheetColList; // Return the updated list
-		} catch (error) {
-			console.error(error);
-			alert(error.message || "Error rendering column headers from database.");
-			return [];
-		}
 	}
 
 	/**
@@ -538,31 +456,21 @@ class SpreadsheetUI {
 	 * @private
 	 */
 	#renderColHead(sheetName, colNames) {
-		try {
-			const tableHeader = document.getElementById(`${sheetName}_header`);
-			tableHeader.innerHTML = ""; // Clear existing headers
-			this.sheetColList = colNames; // Update UI's column list
-
-			colNames.forEach((colName) => {
-				const headerDesc = document.createElement("th");
-				headerDesc.innerHTML = `${colName}`;
-				headerDesc.classList.add(colName); // Apply class for resizing
-
-				// --- NEW: Attach click listener for column selection ---
-				headerDesc.dataset.colKey = colName; // Store column key in dataset
-				headerDesc.addEventListener("click", () => this.selectColumn(colName));
-
-				const div = document.createElement("div");
-				div.classList.add(`${colName}_resize`);
-				div.classList.add(`resize`);
-
-				headerDesc.appendChild(div);
-				tableHeader.appendChild(headerDesc);
-			});
-		} catch (error) {
-			console.error(error);
-			alert("Error rendering column headers for new sheet.");
-		}
+		const tableHeader = document.getElementById(`${sheetName}_header`);
+		tableHeader.innerHTML = "";
+		colNames.forEach((colName) => {
+			const headerDesc = document.createElement("th");
+			headerDesc.innerHTML = `${colName}`;
+			headerDesc.classList.add(colName);
+			headerDesc.addEventListener("click", (e) =>
+				this.selectColumn(colName, e)
+			);
+			const div = document.createElement("div");
+			div.classList.add(`${colName}_resize`);
+			div.classList.add(`resize`);
+			headerDesc.appendChild(div);
+			tableHeader.appendChild(headerDesc);
+		});
 	}
 
 	/**
@@ -590,34 +498,32 @@ class SpreadsheetUI {
 	#addResizing() {
 		const divclass = document.querySelectorAll(".resize");
 		divclass.forEach((resizer) => {
-			resizer.addEventListener("mousedown", (e) => {
+			resizer.removeEventListener("mousedown", resizer._boundMouseDownHandler);
+			resizer._boundMouseDownHandler = (e) => {
 				const th = e.target.parentElement;
-				const col_class = th.classList[0]; // Get the column class (e.g., 'c0', 'A')
+				const col_class = th.classList[0];
 				const startWidth = th.offsetWidth;
 				const startX = e.pageX;
-
 				const onMouseMove = (moveEvent) => {
 					const newWidth = startWidth + (moveEvent.pageX - startX);
 					if (newWidth >= 50) {
-						// Minimum width
 						document.querySelectorAll(`.${col_class}`).forEach((element) => {
 							if (element.tagName === "INPUT") {
-								element.style.width = `${newWidth - 3}px`; // Adjust for padding/border
+								element.style.width = `${newWidth - 3}px`;
 							} else {
 								element.style.width = `${newWidth}px`;
 							}
 						});
 					}
 				};
-
 				const onMouseUp = () => {
 					document.removeEventListener("mousemove", onMouseMove);
 					document.removeEventListener("mouseup", onMouseUp);
 				};
-
 				document.addEventListener("mousemove", onMouseMove);
 				document.addEventListener("mouseup", onMouseUp);
-			});
+			};
+			resizer.addEventListener("mousedown", resizer._boundMouseDownHandler);
 		});
 	}
 
@@ -634,16 +540,14 @@ class SpreadsheetUI {
 	async #renderTableData(sheetName) {
 		const dataInput = document.getElementById(`${sheetName}-data-input`);
 		dataInput.innerHTML = "";
-
 		try {
-			const result = await databaseService.selectAllFromTable(sheetName);
+			const result = await this.spreadsheetService.getTableData(sheetName);
 			if (result) {
 				result.values.forEach((row) => {
-					const tableRow = document.createElement("tr"); // Each <tr> represents a row
+					const tableRow = document.createElement("tr");
 					row.forEach((col, colId) => {
 						const tableCol = document.createElement("td");
 						if (colId !== 0) {
-							// Editable data cells
 							const inputContainer = document.createElement("div");
 							inputContainer.className = "container";
 							const input = document.createElement("input");
@@ -654,32 +558,28 @@ class SpreadsheetUI {
 							input.dataset.rowno = row[0];
 							input.dataset.colname = result.columns[colId];
 							input.dataset.isinmemory = false;
-							input.addEventListener("input", (event) =>
-								this.handleInputChange(
+							input.addEventListener("input", async (event) => {
+								await this.handleInputChange(
 									event,
 									row[0],
 									result.columns[colId],
 									false
-								)
-							);
-
+								);
+							});
 							const dropdownList = document.createElement("ul");
 							dropdownList.type = "none";
 							dropdownList.id = `${sheetName}-${result.columns[colId]}-dropdown`;
 							dropdownList.className = "dropdown";
-
 							inputContainer.appendChild(input);
 							inputContainer.appendChild(dropdownList);
 							tableCol.appendChild(inputContainer);
 							tableCol.classList.add(`${result.columns[colId]}`);
 						} else {
-							// Row number cell (c0) - make it clickable for row selection
 							tableCol.innerHTML = `${col}`;
-							tableCol.classList.add(result.columns[colId]); // Add c0 class for styling/selection
-
-							// --- NEW: Attach click listener for row selection ---
-							tableCol.dataset.rowKey = row[0]; // Store row key in dataset
-							tableCol.addEventListener("click", () => this.selectRow(row[0]));
+							tableCol.classList.add(result.columns[colId]);
+							tableCol.addEventListener("click", (e) =>
+								this.selectRow(row[0], e)
+							);
 						}
 						tableRow.appendChild(tableCol);
 					});
@@ -701,72 +601,72 @@ class SpreadsheetUI {
 	 */
 	#renderSheetFeatures(sheetName, sheetColList, isInMemory) {
 		const restInput = document.getElementById("rest-all-input");
-		const colListString = Array.isArray(sheetColList)
-			? sheetColList.join(",")
-			: "";
+		restInput.innerHTML = "";
 
-		const saveToDbButton = isInMemory
-			? `<button id="saveToDbBtn" style="margin-left: 10px">
-                Save '${sheetName}' to DB
-            </button>`
-			: "";
-
-		restInput.innerHTML = `
-            <div style="margin: 10px 0px; display:flex; flex-direction:row;">
-                <div>
-                    <input type="number" class="append-rows" id="${sheetName}-row-input" placeholder="Enter Row Count."/>
-                    <button id="insertRowsBtn" data-sheet-name="${sheetName}" data-col-list="${colListString}" data-is-in-memory="${isInMemory}" style="margin-left: 10px">Insert Empty Rows</button>
-                </div>
-                ${saveToDbButton}
-                <button id="saveJsonBtn" data-sheet-name="${sheetName}" style="margin-left: 10px">
-                  Save JSON
-                </button>
-                <input type="file" id="loadJsonFileInput" data-sheet-name="${sheetName}" style="margin-left: 10px" />
-                <button id="generateDbDumpBtn" data-sheet-name="${sheetName}" style="margin-left: 10px">
-                  Generate DB dump
-                </button>
-
-                <div style="margin-left: 20px; display: flex; align-items: center;">
-                    <label for="colorPicker-${sheetName}">Cell Color:</label>
-                    <input type="color" id="colorPicker-${sheetName}" value="#ffffff" style="margin-left: 5px;">
-                    <button id="applyColorBtn-${sheetName}" style="margin-left: 5px;">Apply Color</button>
-                </div>
-            </div>`;
-		// Attach event listeners for these dynamically rendered buttons
+		const mainContainerDiv = document.createElement("div");
+		mainContainerDiv.style.cssText =
+			"margin: 10px 0px; display: flex; flex-direction: row;";
+		const rowInputContainerDiv = document.createElement("div");
+		const rowCountInput = document.createElement("input");
+		rowCountInput.type = "number";
+		rowCountInput.id = `${sheetName}-row-input`;
+		rowCountInput.placeholder = "Enter Row Count.";
+		rowInputContainerDiv.appendChild(rowCountInput);
+		const insertRowsButton = document.createElement("button");
+		insertRowsButton.textContent = "Insert Empty Rows";
+		insertRowsButton.id = "insertRowsBtn";
+		insertRowsButton.style.marginLeft = "10px";
+		insertRowsButton.dataset.sheetName = sheetName;
+		insertRowsButton.dataset.colList = sheetColList;
+		insertRowsButton.dataset.isInMemory = isInMemory.toString();
+		insertRowsButton.addEventListener("click", (event) => {
+			const btn = event.currentTarget;
+			this.insertRows(
+				btn.dataset.sheetName,
+				btn.dataset.colList,
+				btn.dataset.isInMemory === "true"
+			);
+		});
+		rowInputContainerDiv.appendChild(insertRowsButton);
+		mainContainerDiv.appendChild(rowInputContainerDiv);
 		if (isInMemory) {
-			document
-				.getElementById("saveToDbBtn")
-				?.addEventListener("click", () => this.saveInMemorySpreadsheetToDb());
+			const saveToDbButton = document.createElement("button");
+			saveToDbButton.textContent = `Save '${sheetName}' to DB`;
+			saveToDbButton.id = "saveToDbBtn";
+			saveToDbButton.style.marginLeft = "10px";
+			saveToDbButton.addEventListener("click", () => {
+				this.saveInMemorySpreadsheetToDb();
+			});
+			mainContainerDiv.appendChild(saveToDbButton);
 		}
-		document
-			.getElementById("insertRowsBtn")
-			?.addEventListener("click", (event) => {
-				const btn = event.target;
-				this.insertRows(
-					btn.dataset.sheetName,
-					btn.dataset.colList,
-					btn.dataset.isInMemory === "true"
-				);
-			});
-		document
-			.getElementById("saveJsonBtn")
-			?.addEventListener("click", (event) => this.saveJson(event));
-		document
-			.getElementById("loadJsonFileInput")
-			?.addEventListener("change", (event) => this.loadJson(event));
-		document
-			.getElementById("generateDbDumpBtn")
-			?.addEventListener("click", (event) => this.handleGenerateDBdump(event));
-
-		// --- NEW: Attach listener for Apply Color button ---
-		document
-			.getElementById(`applyColorBtn-${sheetName}`)
-			?.addEventListener("click", () => {
-				const selectedColor = document.getElementById(
-					`colorPicker-${sheetName}`
-				).value;
-				this.applyBackgroundColor(selectedColor);
-			});
+		const saveJsonButton = document.createElement("button");
+		saveJsonButton.textContent = "Save JSON";
+		saveJsonButton.id = "saveJsonBtn";
+		saveJsonButton.style.marginLeft = "10px";
+		saveJsonButton.dataset.sheetName = sheetName;
+		saveJsonButton.addEventListener("click", (event) => {
+			this.saveJson(event);
+		});
+		mainContainerDiv.appendChild(saveJsonButton);
+		const loadJsonInput = document.createElement("input");
+		loadJsonInput.type = "file";
+		loadJsonInput.id = "loadJsonFileInput";
+		loadJsonInput.style.marginLeft = "10px";
+		loadJsonInput.dataset.sheetName = sheetName;
+		loadJsonInput.addEventListener("change", (event) => {
+			this.loadJson(event);
+		});
+		mainContainerDiv.appendChild(loadJsonInput);
+		const generateDbDumpButton = document.createElement("button");
+		generateDbDumpButton.textContent = "Generate DB dump";
+		generateDbDumpButton.id = "generateDbDumpBtn";
+		generateDbDumpButton.style.marginLeft = "10px";
+		generateDbDumpButton.dataset.sheetName = sheetName;
+		generateDbDumpButton.addEventListener("click", (event) => {
+			this.handleGenerateDBdump(event);
+		});
+		mainContainerDiv.appendChild(generateDbDumpButton);
+		restInput.appendChild(mainContainerDiv);
 	}
 
 	/**
@@ -783,25 +683,23 @@ class SpreadsheetUI {
 			alert("Please enter a valid positive number of rows to insert.");
 			return;
 		}
-
 		const columnsArray = colsListString.split(",");
-		const colCount = columnsArray.length;
 		const tableBody = document.getElementById(`${sheetName}-data-input`);
-
 		let startRowId = 1;
-		if (isInMemory && this.currentInMemorySpreadsheet) {
-			// Find max key in c0 column or get current rowCount + 1
+		if (isInMemory) {
 			const maxKey =
 				this.currentInMemorySpreadsheet.rowCount > 0
-					? Array.from(this.currentInMemorySpreadsheet.uniqueRowKeys).reduce(
-							(max, current) => Math.max(max, current),
-							0
+					? Math.max(
+							...Array.from(this.currentInMemorySpreadsheet.uniqueRowKeys)
 					  )
 					: 0;
 			startRowId = maxKey + 1;
-		} else if (!isInMemory) {
+		} else {
 			try {
-				const metadata = await this.databaseService.getTableMetadata(sheetName);
+				const metadata =
+					await this.spreadsheetService.databaseService.getTableMetadata(
+						sheetName
+					);
 				if (metadata && metadata.max_id !== null) {
 					startRowId = parseInt(metadata.max_id, 10) + 1;
 				}
@@ -813,29 +711,23 @@ class SpreadsheetUI {
 			}
 		}
 
-		// UI Rendering Part (similar for both in-memory and DB-backed)
 		for (let i = 0; i < rowsToInsert; i++) {
 			const currentRowId = startRowId + i;
 			const bodyRow = document.createElement("tr");
-			for (let j = 0; j < colCount; j++) {
+			for (let j = 0; j < columnsArray.length; j++) {
 				const tableCol = document.createElement("td");
 				if (j !== 0) {
-					tableCol.innerHTML = "";
-
 					const inputContainer = document.createElement("div");
 					inputContainer.className = "container";
-
 					const input = document.createElement("input");
-
-					input.className = `${columnsArray[j]} input-cell`; // Dynamic class from column name
+					input.className = `${columnsArray[j]} input-cell`;
 					input.type = "text";
-					input.name = sheetName; // Sheet name as the form 'name'
-					input.value = ""; // Initial empty value for new rows
-
-					// --- IMPORTANT: Attach the oninput event listener programmatically ---
-					// Use an arrow function to maintain 'this' context, and pass all necessary arguments.
+					input.name = sheetName;
+					input.value = "";
+					input.dataset.rowno = currentRowId;
+					input.dataset.colname = columnsArray[j];
+					input.dataset.isinmemory = isInMemory;
 					input.addEventListener("input", (event) => {
-						// Pass the original boolean 'isInMemory' directly
 						this.handleInputChange(
 							event,
 							currentRowId,
@@ -843,94 +735,48 @@ class SpreadsheetUI {
 							isInMemory
 						);
 					});
-
-					// Optional but recommended: Store dynamic data in dataset attributes
-					input.dataset.rowno = currentRowId;
-					input.dataset.colname = columnsArray[j];
-					input.dataset.isinmemory = isInMemory.toString(); // Dataset values are strings, convert boolean to string
-
 					const dropdownList = document.createElement("ul");
-
-					dropdownList.type = "none"; // 'none' as string for type attribute
-					dropdownList.id = `${sheetName}-${columnsArray[j]}-dropdown`; // Dynamic ID
-					dropdownList.className = "dropdown"; // Set the class
-
+					dropdownList.type = "none";
+					dropdownList.id = `${sheetName}-${columnsArray[j]}-dropdown`;
+					dropdownList.className = "dropdown";
 					inputContainer.appendChild(input);
 					inputContainer.appendChild(dropdownList);
-
 					tableCol.appendChild(inputContainer);
-
 					tableCol.classList.add(columnsArray[j]);
 				} else {
-					// For the non-editable row ID column
 					tableCol.innerHTML = `${currentRowId}`;
-
-					// --- NEW: Attach click listener for row selection ---
-					tableCol.dataset.rowKey = currentRowId; // Store row key in dataset
-					tableCol.addEventListener("click", () =>
-						this.selectRow(currentRowId)
+					tableCol.classList.add(columnsArray[j]);
+					tableCol.addEventListener("click", (e) =>
+						this.selectRow(currentRowId, e)
 					);
 				}
 				bodyRow.appendChild(tableCol);
 			}
 			tableBody.appendChild(bodyRow);
-
-			// Data Insertion Part (depends on whether it's in-memory or DB-backed)
-			if (isInMemory && this.currentInMemorySpreadsheet) {
+			if (isInMemory) {
 				this.currentInMemorySpreadsheet.insertData(
 					currentRowId,
 					"c0",
 					currentRowId
-				); // Insert ID
+				);
 				for (let j = 1; j < columnsArray.length; j++) {
 					this.currentInMemorySpreadsheet.insertData(
 						currentRowId,
 						columnsArray[j],
 						""
-					); // Insert empty string for other cells
-				}
-			}
-		}
-
-		// If it's a DB-backed sheet, also insert into DB
-		if (!isInMemory) {
-			const chunkSize = 50;
-			const noOfIterations = Math.ceil(rowsToInsert / chunkSize);
-
-			for (let k = 0; k < noOfIterations; k++) {
-				const currentBatchSize = Math.min(
-					rowsToInsert - k * chunkSize,
-					chunkSize
-				);
-				let query = `INSERT INTO "${sheetName}" (${columnsArray
-					.map((col) => `"${col}"`)
-					.join(", ")}) VALUES `;
-				const valuesToInsert = [];
-
-				for (let i = 0; i < currentBatchSize; i++) {
-					const rowId = startRowId + k * chunkSize + i;
-					let rowValues = [`${rowId}`];
-					for (let j = 1; j < colCount; j++) {
-						rowValues.push(`''`);
-					}
-					valuesToInsert.push(`(${rowValues.join(", ")})`);
-				}
-				query += valuesToInsert.join(", ") + ";";
-
-				try {
-					await this.databaseService.runQuery(query);
-				} catch (error) {
-					alert(
-						`Error Inserting Data into DB at iteration ${
-							k + 1
-						}. See console for details.`
 					);
-					console.error(error);
-					break;
 				}
 			}
 		}
-		rowsInput.value = ""; // Clear input field after insertion
+		if (!isInMemory) {
+			await this.spreadsheetService.insertRowsIntoDb(
+				sheetName,
+				columnsArray,
+				rowsToInsert,
+				startRowId
+			);
+		}
+		rowsInput.value = "";
 	}
 
 	/**
@@ -946,76 +792,34 @@ class SpreadsheetUI {
 			`${sheetName}-${colname}-dropdown`
 		);
 
-		if (
-			isInMemory &&
-			this.currentInMemorySpreadsheet &&
-			this.activeSheetName === sheetName
-		) {
-			// Update the in-memory AVL tree
+		if (isInMemory) {
 			this.currentInMemorySpreadsheet.insertData(rowno, colname, value);
-			dropdown.style.display = "none"; // Hide dropdown
-			// console.log("In-memory spreadsheet updated:", this.currentInMemorySpreadsheet.retrieveCellData(rowno, colname));
-			return; // Exit as it's an in-memory update
+			dropdown.style.display = "none";
+			return;
 		}
 
-		// --- Database-backed update logic (copied from previous version) ---
 		try {
-			const foreignKeysResult = await this.databaseService.getForeignKeyList(
-				sheetName
+			const updateInfo = await this.spreadsheetService.getCellUpdateInfo(
+				sheetName,
+				rowno,
+				colname,
+				value
 			);
-			let referringTable = "";
-			let referringColumns = [];
-
-			foreignKeysResult.forEach((col) => {
-				if (col[3] === colname) {
-					referringTable = col[2];
-				}
-			});
-
-			if (referringTable !== "") {
-				foreignKeysResult.forEach((col) => {
-					if (col[2] === referringTable && col[3] !== colname) {
-						referringColumns.push(col[3]);
-					}
-				});
-
-				let relatedValuesQuery = "";
-				let relatedValuesResult = null;
-
-				if (referringColumns.length > 0) {
-					relatedValuesQuery = `SELECT ${referringColumns
-						.map((c) => `"${c}"`)
-						.join(", ")} FROM "${sheetName}" WHERE c0 = ${rowno}`;
-					relatedValuesResult =
-						this.databaseService.runQuery(relatedValuesQuery);
-				}
-
-				let dropdownQuery = `SELECT DISTINCT("${colname}") FROM "${referringTable}" WHERE`;
-				if (relatedValuesResult && relatedValuesResult.values.length > 0) {
-					relatedValuesResult.columns.forEach((relCol, id) => {
-						const relValue = relatedValuesResult.values[0][id];
-						if (relValue !== "") {
-							dropdownQuery += ` "${relCol}" = "${relValue}" AND`;
-						}
-					});
-				}
-				dropdownQuery += ` "${colname}" LIKE "%${value}%" LIMIT 10;`;
-
-				const dropdownResult = this.databaseService.runQuery(dropdownQuery);
+			if (updateInfo.type === "foreignKey") {
 				dropdown.innerHTML = "";
-
-				if (dropdownResult && dropdownResult.values.length > 0) {
+				if (updateInfo.suggestions.length > 0) {
 					dropdown.style.display = "block";
-					dropdownResult.values.forEach((data) => {
+					updateInfo.suggestions.forEach((data) => {
 						const li = document.createElement("li");
 						li.innerHTML = data[0];
-						li.id = data[0];
+						li.dataset.value = data[0];
 						li.addEventListener("click", async (e) => {
 							dropdown.style.display = "none";
-							event.target.value = e.target.id;
+							event.target.value = e.target.dataset.value;
 							try {
-								await this.databaseService.runQuery(
-									`UPDATE "${sheetName}" SET "${colname}" = "${e.target.id}" WHERE c0 = ${rowno};`
+								await this.spreadsheetService.updateCell(
+									updateInfo.updateQuery,
+									[e.target.dataset.value]
 								);
 							} catch (updateError) {
 								console.error(
@@ -1031,10 +835,7 @@ class SpreadsheetUI {
 					dropdown.style.display = "none";
 				}
 			} else {
-				// No foreign key relationship, simply update the cell in DB
-				await this.databaseService.runQuery(
-					`UPDATE "${sheetName}" SET "${colname}" = "${value}" WHERE c0 = ${rowno};`
-				);
+				await this.spreadsheetService.updateCell(updateInfo.updateQuery);
 				dropdown.style.display = "none";
 			}
 		} catch (error) {
@@ -1053,77 +854,19 @@ class SpreadsheetUI {
 			alert("No in-memory spreadsheet to save.");
 			return;
 		}
-
 		const spreadsheet = this.currentInMemorySpreadsheet;
 		const newDbSheetName = `saved_sheet_${Math.floor(Math.random() * 100000)}`;
-
 		try {
-			// 1. Create the table in the database
-			let createTableQuery = `CREATE TABLE "${newDbSheetName}" (c0 INTEGER PRIMARY KEY`;
-			const dbColumnNames = []; // Columns for the DB table
-			dbColumnNames.push("c0");
-
-			// Assuming your in-memory spreadsheet column keys are the same as what you want in DB
-			const inMemoryColumns = spreadsheet.columnTree._traverseInOrder(
-				spreadsheet.columnTree.root
+			await this.spreadsheetService.saveInMemorySpreadsheet(
+				newDbSheetName,
+				spreadsheet
 			);
-			inMemoryColumns.forEach((colNode) => {
-				if (colNode.key !== "c0") {
-					// Skip c0 as it's handled by PRIMARY KEY
-					createTableQuery += ` ,"${colNode.key}" TEXT`;
-					dbColumnNames.push(colNode.key);
-				}
-			});
-			createTableQuery += `);`;
-
-			this.databaseService.runQuery(createTableQuery);
-			console.log(`Table '${newDbSheetName}' created in DB.`);
-
-			// 2. Iterate through the in-memory spreadsheet and insert data into the new DB table
-			const allCells = spreadsheet.traverseAll(); // Get all data from AVL of AVL
-			const chunkSize = 50;
-
-			if (allCells.length > 0) {
-				// Check if there are columns
-				// Get a flattened list of all unique row keys for batching inserts
-				const allRowKeys = Array.from(spreadsheet.uniqueRowKeys).sort(
-					(a, b) => a - b
-				);
-
-				for (let i = 0; i < allRowKeys.length; i += chunkSize) {
-					const batchRowKeys = allRowKeys.slice(i, i + chunkSize);
-					let insertQuery = `INSERT INTO "${newDbSheetName}" (${dbColumnNames
-						.map((c) => `"${c}"`)
-						.join(", ")}) VALUES `;
-					const batchValues = [];
-
-					for (const rowKey of batchRowKeys) {
-						const rowValues = [];
-						rowValues.push(`${rowKey}`); // Add the row ID (c0)
-
-						for (let j = 1; j < dbColumnNames.length; j++) {
-							// Start from 1 to skip c0
-							const colName = dbColumnNames[j];
-							const cellValue = spreadsheet.retrieveCellData(rowKey, colName);
-							rowValues.push(
-								`"${String(cellValue || "").replace(/"/g, '""')}"`
-							); // Sanitize and quote
-						}
-						batchValues.push(`(${rowValues.join(", ")})`);
-					}
-
-					if (batchValues.length > 0) {
-						insertQuery += batchValues.join(", ") + ";";
-						await this.databaseService.runQuery(insertQuery);
-					}
-				}
-			}
 			alert(
 				`Spreadsheet '${spreadsheet.sheetName}' successfully saved to database as '${newDbSheetName}'.`
 			);
-			this.currentInMemorySpreadsheet = null; // Clear the in-memory spreadsheet after saving
-			this.renderSheetsNames(); // Refresh the side panel to show the new DB sheet
-			this.renderSheet(newDbSheetName); // Render the newly saved sheet (now DB-backed)
+			this.currentInMemorySpreadsheet = null;
+			this.renderSheetsNames();
+			this.renderSheet(newDbSheetName);
 		} catch (error) {
 			console.error("Error saving in-memory spreadsheet to DB:", error);
 			alert(`Error saving spreadsheet to database: ${error.message}`);
@@ -1136,7 +879,7 @@ class SpreadsheetUI {
 	 */
 	async handleGenerateDBdump(event) {
 		try {
-			const dump = await this.databaseService.exportDb();
+			const dump = await this.spreadsheetService.exportDb();
 			const dumpBlob = new Blob([dump], { type: "application/octet-stream" });
 			const dumpUrl = URL.createObjectURL(dumpBlob);
 
@@ -1160,7 +903,7 @@ class SpreadsheetUI {
 	async saveJson(event) {
 		const sheetName = event.target.name;
 		try {
-			const res = await this.databaseService.selectAllFromTable(sheetName);
+			const res = await this.spreadsheetService.selectAllFromTable(sheetName);
 			if (res) {
 				const jsonData = JSON.stringify(res, null, 2); // Pretty print JSON
 				const blob = new Blob([jsonData], { type: "application/json" });
@@ -1217,7 +960,7 @@ class SpreadsheetUI {
 				let tableExists = false;
 
 				try {
-					const metadata = await this.databaseService.getTableMetadata(
+					const metadata = await this.spreadsheetService.getTableMetadata(
 						sheetName
 					);
 					if (metadata) {
@@ -1260,7 +1003,7 @@ class SpreadsheetUI {
 						nextRowId++;
 
 						try {
-							await this.databaseService.runQuery(query);
+							await this.spreadsheetService.runQuery(query);
 						} catch (error) {
 							alert(
 								`Error while inserting Data from file into existing table at row ${
@@ -1287,7 +1030,7 @@ class SpreadsheetUI {
 					createTableQuery += `);`;
 
 					try {
-						await this.databaseService.runQuery(createTableQuery);
+						await this.spreadsheetService.runQuery(createTableQuery);
 					} catch (error) {
 						console.error("Error creating new table for JSON import:", error);
 						alert("Error creating new table for JSON import.");
@@ -1321,7 +1064,7 @@ class SpreadsheetUI {
 						currentIdForNewTable++;
 
 						try {
-							await this.databaseService.runQuery(query);
+							await this.spreadsheetService.runQuery(query);
 						} catch (error) {
 							alert(
 								`Error while inserting Data from file into new table at row ${
@@ -1350,7 +1093,7 @@ class SpreadsheetUI {
 		sheetList.innerHTML = ""; // Clear existing list
 
 		try {
-			const tableNames = await this.databaseService.getTableNames();
+			const tableNames = await this.spreadsheetService.getTableNames();
 			if (tableNames.length > 0) {
 				tableNames.forEach((tableName) => {
 					const anch = document.createElement("a");
@@ -1369,38 +1112,6 @@ class SpreadsheetUI {
 			alert(error.message || "Could not retrieve sheet names.");
 		}
 		this.openSidePanel();
-	}
-
-	/**
-	 * Handles selection of a row.
-	 * @param {number} rowKey - The key of the row to select.
-	 */
-	selectRow(rowKey) {
-		// If the same row is clicked again, deselect it
-		if (this.activeSelectionType === "row" && this.selectedRowKey === rowKey) {
-			this.#clearSelection();
-		} else {
-			this.#clearSelection(); // Clear any previous selection (row or column)
-			this.selectedRowKey = rowKey;
-			this.activeSelectionType = "row";
-			this.#highlightSelection();
-		}
-	}
-
-	/**
-	 * Handles selection of a column.
-	 * @param {string} colKey - The key of the column to select.
-	 */
-	selectColumn(colKey) {
-		// If the same column is clicked again, deselect it
-		if (this.activeSelectionType === "col" && this.selectedColKey === colKey) {
-			this.#clearSelection();
-		} else {
-			this.#clearSelection(); // Clear any previous selection (row or column)
-			this.selectedColKey = colKey;
-			this.activeSelectionType = "col";
-			this.#highlightSelection();
-		}
 	}
 
 	/**
@@ -1465,53 +1176,215 @@ class SpreadsheetUI {
 		}
 	}
 
+	#handleDragStart(key, type, event) {
+		event.preventDefault(); // Prevents browser's native text selection on drag
+		this.isDragging = true;
+		this.#removeAllHighlights(); // Start with a fresh selection
+
+		if (type === "row") {
+			this.dragStartRowKey = key;
+			this.selectedRowKeys.add(key);
+			this.selectedColKeys.clear(); // Clear other type of selection
+		} else if (type === "col") {
+			this.dragStartColKey = key;
+			this.selectedColKeys.add(key);
+			this.selectedRowKeys.clear(); // Clear other type of selection
+		}
+		this.#updateHighlights();
+	}
+
+	#handleDragMove(event) {
+		if (!this.isDragging) return;
+
+		event.preventDefault(); // Prevents text selection
+		const targetElement = event.target.closest("th, td");
+		if (!targetElement) return;
+
+		const isHeader = targetElement.tagName === "TH";
+		const isRowNumberCell = targetElement.classList.contains("c0");
+
+		// Logic for dragging rows
+		if (this.dragStartRowKey !== null && isRowNumberCell) {
+			const endRowKey = parseInt(targetElement.dataset.rowKey, 10);
+			this.#selectRowRange(this.dragStartRowKey, endRowKey);
+			this.#updateHighlights();
+		}
+		// Logic for dragging columns
+		else if (this.dragStartColKey !== null && isHeader) {
+			const endColKey = targetElement.dataset.colKey;
+			this.#selectColumnRange(this.dragStartColKey, endColKey);
+			this.#updateHighlights();
+		}
+	}
+
+	#handleDragEnd(event) {
+		if (!this.isDragging) return;
+
+		this.isDragging = false;
+		this.dragStartRowKey = null;
+		this.dragStartColKey = null;
+		// Important: Reset last clicked keys so that Shift+Click works correctly after a drag
+		this.lastClickedRowKey =
+			this.selectedRowKeys.size > 0 ? [...this.selectedRowKeys].pop() : null;
+		this.lastClickedColKey =
+			this.selectedColKeys.size > 0 ? [...this.selectedColKeys].pop() : null;
+	}
+
+	// You will need to make the existing #selectRowRange and #selectColumnRange methods
+	// accessible to be called from the drag logic.
+	#selectRowRange(startKey, endKey) {
+		this.selectedRowKeys.clear();
+		this.selectedColKeys.clear();
+		const start = Math.min(startKey, endKey);
+		const end = Math.max(startKey, endKey);
+		const tableBody = document.getElementById(
+			`${this.activeSheetName}-data-input`
+		);
+		if (tableBody) {
+			Array.from(tableBody.children).forEach((tr) => {
+				const rowId = parseInt(tr.children[0].textContent, 10);
+				if (rowId >= start && rowId <= end) {
+					this.selectedRowKeys.add(rowId);
+				}
+			});
+		}
+	}
+
+	#selectColumnRange(startKey, endKey) {
+		this.selectedColKeys.clear();
+		this.selectedRowKeys.clear();
+		const colNames = this.sheetColList;
+		const startIndex = colNames.indexOf(startKey);
+		const endIndex = colNames.indexOf(endKey);
+		const start = Math.min(startIndex, endIndex);
+		const end = Math.max(startIndex, endIndex);
+		for (let i = start; i <= end; i++) {
+			this.selectedColKeys.add(colNames[i]);
+		}
+	}
+
+	selectRow(rowKey, event) {
+		if (event.shiftKey && this.lastClickedRowKey !== null) {
+			this.#selectRowRange(this.lastClickedRowKey, rowKey);
+		} else if (event.ctrlKey || event.metaKey) {
+			this.#toggleSingleRow(rowKey);
+			this.lastClickedRowKey = rowKey;
+		} else {
+			this.#selectSingleRow(rowKey);
+		}
+		this.#updateHighlights();
+	}
+
+	selectColumn(colKey, event) {
+		if (event.shiftKey && this.lastClickedColKey !== null) {
+			this.#selectColumnRange(this.lastClickedColKey, colKey);
+		} else if (event.ctrlKey || event.metaKey) {
+			this.#toggleSingleCol(colKey);
+			this.lastClickedColKey = colKey;
+		} else {
+			this.#selectSingleCol(colKey);
+		}
+		this.#updateHighlights();
+	}
+
+	#selectSingleRow(rowKey) {
+		this.selectedRowKeys.clear();
+		this.selectedColKeys.clear();
+		this.selectedRowKeys.add(rowKey);
+		this.lastClickedRowKey = rowKey;
+	}
+
+	#toggleSingleRow(rowKey) {
+		if (this.selectedRowKeys.has(rowKey)) {
+			this.selectedRowKeys.delete(rowKey);
+		} else {
+			this.selectedRowKeys.add(rowKey);
+		}
+	}
+
+	#selectSingleCol(colKey) {
+		this.selectedColKeys.clear();
+		this.selectedRowKeys.clear();
+		this.selectedColKeys.add(colKey);
+		this.lastClickedColKey = colKey;
+	}
+
+	#toggleSingleCol(colKey) {
+		if (this.selectedColKeys.has(colKey)) {
+			this.selectedColKeys.delete(colKey);
+		} else {
+			this.selectedColKeys.add(colKey);
+		}
+	}
+
+	#updateHighlights() {
+		this.#removeAllHighlights();
+		this.selectedRowKeys.forEach((rowKey) => {
+			const tableBody = document.getElementById(
+				`${this.activeSheetName}-data-input`
+			);
+			const selectedRowElement =
+				tableBody &&
+				Array.from(tableBody.children).find((tr) => {
+					const rowIdCell = tr.children[0];
+					return rowIdCell && parseInt(rowIdCell.textContent, 10) === rowKey;
+				});
+			selectedRowElement?.classList.add("selected-row");
+		});
+		this.selectedColKeys.forEach((colKey) => {
+			document.querySelectorAll(`.${colKey}`).forEach((el) => {
+				el.classList.add("selected-col");
+			});
+		});
+	}
+
+	#removeAllHighlights() {
+		document
+			.querySelectorAll(".selected-row")
+			.forEach((el) => el.classList.remove("selected-row"));
+		document
+			.querySelectorAll(".selected-col")
+			.forEach((el) => el.classList.remove("selected-col"));
+	}
+
 	/**
 	 * Applies a background color to the currently selected row or column.
 	 * @param {string} color - The CSS color string (e.g., "#FF0000", "blue").
 	 */
 	applyBackgroundColor(color) {
-		if (!this.activeSelectionType) {
+		if (this.selectedRowKeys.size === 0 && this.selectedColKeys.size === 0) {
 			alert("Please select a row or column first to apply color.");
 			return;
 		}
-
-		if (this.activeSelectionType === "row" && this.selectedRowKey !== null) {
+		this.selectedRowKeys.forEach((rowKey) => {
 			const tableBody = document.getElementById(
 				`${this.activeSheetName}-data-input`
 			);
-			if (tableBody) {
-				const selectedRowElement = Array.from(tableBody.children).find((tr) => {
+			const selectedRowElement =
+				tableBody &&
+				Array.from(tableBody.children).find((tr) => {
 					const rowIdCell = tr.children[0];
-					return (
-						rowIdCell &&
-						parseInt(rowIdCell.textContent, 10) === this.selectedRowKey
-					);
+					return rowIdCell && parseInt(rowIdCell.textContent, 10) === rowKey;
 				});
-				if (selectedRowElement) {
-					Array.from(selectedRowElement.children).forEach((cell) => {
-						cell.style.backgroundColor = color;
-					});
-				}
+			if (selectedRowElement) {
+				Array.from(selectedRowElement.children).forEach((cell) => {
+					cell.style.backgroundColor = color;
+				});
 			}
-		} else if (
-			this.activeSelectionType === "col" &&
-			this.selectedColKey !== null
-		) {
-			document.querySelectorAll(`.${this.selectedColKey}`).forEach((el) => {
-				// Apply color only to actual table cells (TH and TD)
+		});
+		this.selectedColKeys.forEach((colKey) => {
+			document.querySelectorAll(`.${colKey}`).forEach((el) => {
 				if (el.tagName === "TD" || el.tagName === "TH") {
 					el.style.backgroundColor = color;
 				}
 			});
-		}
-		this.#clearSelection(); // Clear selection after applying color
-		alert(
-			`Background color applied to ${this.activeSelectionType} ${
-				this.activeSelectionType === "row"
-					? this.selectedRowKey
-					: this.selectedColKey
-			}.`
-		);
+		});
+		this.selectedRowKeys.clear();
+		this.selectedColKeys.clear();
+		this.lastClickedRowKey = null;
+		this.lastClickedColKey = null;
+		this.#removeAllHighlights();
+		alert(`Background color applied to selected cells.`);
 	}
 
 	/**

@@ -4,6 +4,35 @@ body {
 	font-family: sans-serif;
 }
 
+button {
+	background-color: #3892c2ce; /* Green */
+	color: white;
+	border: none;
+	padding: 10px 20px;
+	text-align: center;
+	text-decoration: none;
+	display: inline-block;
+	font-size: 16px;
+	margin: 4px 2px;
+	cursor: pointer;
+	border-radius: 4px;
+	transition: background-color 0.3s, transform 0.2s;
+}
+
+button:hover {
+	background-color: #28c0c0; /* Darker green on hover */
+}
+
+#user-rows,
+#user-columns,
+.append-rows {
+	border: 1px solid #ccc;
+	border-radius: 4px;
+	padding: 8px;
+	margin: 5px;
+	font-size: 16px;
+}
+
 h2 {
 	text-align: left;
 }
@@ -38,8 +67,10 @@ thead tr {
 
 th,
 td {
-	/* padding: 8px 12px;  */
+	padding: 5px;
 	text-align: left;
+	border: 1px solid #ccc;
+	white-space: nowrap; /* Prevent text wrapping in cells */
 }
 
 #sidepanel-items {
@@ -67,6 +98,7 @@ td {
 
 thead tr {
 	position: sticky;
+	z-index: 1;
 }
 
 th {
@@ -86,7 +118,7 @@ td {
 }
 th:first-child,
 td:first-child {
-	width: 30px;
+	width: 50px;
 	text-align: center;
 	background-color: #f5f5f5;
 	font-weight: bold;
@@ -119,8 +151,7 @@ td input {
 	max-height: 150px;
 	overflow-y: auto;
 	z-index: 10;
-	display: none;
-	/* Hide dropdown initially */
+	display: none; /* Hide dropdown initially */
 }
 
 .dropdown li {
@@ -135,24 +166,16 @@ td input {
 
 /* The sidepanel menu */
 .sidepanel {
-	height: 100%;
-	/* Specify a height */
-	width: 0;
-	/* 0 width - change this with JavaScript */
-	position: fixed;
-	/* Stay in place */
-	z-index: 1;
-	/* Stay on top */
+	height: 100%; /* Specify a height */
+	width: 0; /* 0 width - change this with JavaScript */
+	position: fixed; /* Stay in place */
+	z-index: 2; /* Stay on top */
 	top: 0;
 	left: 0;
-	background-color: #111;
-	/* Black*/
-	overflow-x: hidden;
-	/* Disable horizontal scroll */
-	padding-top: 60px;
-	/* Place content 60px from the top */
-	transition: 0.5s;
-	/* 0.5 second transition effect to slide in the sidepanel */
+	background-color: #111; /* Black*/
+	overflow-x: hidden; /* Disable horizontal scroll */
+	padding-top: 60px; /* Place content 60px from the top */
+	transition: 0.5s; /* 0.5 second transition effect to slide in the sidepanel */
 }
 
 /* The sidepanel links */
@@ -195,6 +218,30 @@ td input {
 
 #options a {
 	cursor: pointer;
+}
+
+.input-cell {
+	width: 100px;
+	height: 30px;
+}
+
+/* Class to highlight a selected row */
+.selected-row {
+	background-color: #e0e0ff; /* Light blue for selection */
+	outline: 2px solid blue; /* Optional: outline for stronger feedback */
+}
+
+/* Class to highlight a selected column (cells within that column) */
+.selected-col {
+	background-color: #e0ffe0; /* Light green for selection */
+	outline: 2px solid green; /* Optional: outline for stronger feedback */
+}
+
+/* Ensure selected state is visible */
+.selected-row > td,
+.selected-row > th {
+	/* Prevents child background from covering parent highlight if cell has its own color */
+	/* This might need careful handling if individual cells can also have colors */
 }
 
 /* .pagination {

@@ -11,10 +11,6 @@ class BackendService {
 		 * @property {object} databaseService - A low-level service for direct database operations.
 		 */
 		this.databaseService = databaseReference;
-		/**
-		 * @property {Spreadsheet|null} currentInMemorySpreadsheet - The current in-memory data structure for new sheets.
-		 */
-		// this.currentInMemorySpreadsheet = null;
 	}
 
 	/**
@@ -175,25 +171,20 @@ class BackendService {
 				console.log("Table doesn't exists.");
 				sheetId = await this.databaseService.addSheet(spreadsheetName);
 				console.log(sheetId);
-				// --- FIX: Get columns from the in-memory tree ---
-				const inMemoryColumns = inMemorySpreadsheet.columnTree._traverseInOrder(
-					inMemorySpreadsheet.columnTree.root
+				await this.databaseService.insertColumnNames(
+					sheetId,
+					inMemorySpreadsheet.columns
 				);
-				const columnNames = inMemoryColumns.map((col) => col.key);
-
-				await this.databaseService.insertColumnNames(sheetId, columnNames);
 			} else {
 				sheetId = sheetResult[0];
 				console.log("Using existing table with ID:", sheetId);
 			}
 
-			// --- FIX: Correct traversal logic for the AVL of AVL structure ---
 			const inMemoryColumns = inMemorySpreadsheet.columnTree._traverseInOrder(
 				inMemorySpreadsheet.columnTree.root
 			);
 
 			for (const col of inMemoryColumns) {
-				// Correct call: use the nested AVLTree instance (col.rows), not its root node
 				const inMemoryRows = col.rows
 					? col.rows._traverseInOrder(col.rows.root)
 					: [];
@@ -220,6 +211,7 @@ class BackendService {
 
 	async loadSpreadsheet(spreadsheetName) {
 		try {
+			console.log("Loading spreadsheet:", spreadsheetName);
 			if (spreadsheetName == null) {
 				return null;
 			}
@@ -229,7 +221,6 @@ class BackendService {
 			let sheetResult = await this.databaseService.findSheetByName(
 				spreadsheetName
 			);
-
 			if (sheetResult == null) {
 				console.log("Table doesn't exists.");
 				throw new Error("Sheet not found!!");
@@ -251,7 +242,6 @@ class BackendService {
 			if (sheetData == null) {
 				throw new Error("No Data found!!");
 			}
-			console.log(sheetData);
 			for (const data of sheetData) {
 				spreadsheet.insertData(data[2], data[1], data[3], JSON.parse(data[4]));
 			}

@@ -208,7 +208,7 @@ class DatabaseService {
 	 */
 	async getSheetData(sheetId) {
 		const result = await this.runQuery(
-			`SELECT * FROM sheet_data WHERE 'sheet_id' = ${sheetId};`
+			`SELECT * FROM sheet_data WHERE sheet_id = ${sheetId};`
 		);
 		console.log(result);
 		return result ? result.values : null;
@@ -221,11 +221,10 @@ class DatabaseService {
 	 * @returns {Promise<object|null>} A promise that resolves to the result object or null.
 	 */
 	async runQuery(query, params = []) {
-		console.log("query:", query, "params:", params);
 		this.#ensureDbInitialized();
 		try {
 			const results = this.db.exec(query, params);
-			console.log("Query executed successfully:", query);
+			console.log("Query executed successfully:", query, results);
 			return results.length > 0 ? results[0] : null;
 		} catch (error) {
 			console.error("Error executing query:", query, error);

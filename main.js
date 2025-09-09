@@ -13,7 +13,6 @@ async function initializeApp() {
 		console.log("Application initialized successfully.");
 	} catch (error) {
 		console.error("Failed to initialize application:", error);
-		alert("Application failed to start due to an initialization error.");
 	}
 }
 

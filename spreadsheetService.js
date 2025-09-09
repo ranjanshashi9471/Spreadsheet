@@ -3,24 +3,26 @@ class BackendService {
 	 * @classdesc A service layer that encapsulates all business logic and database interactions
 	 * for the spreadsheet application. It provides a high-level API to the UI.
 	 * @constructor
+	 * @param {object} databaseService - A low-level service for direct database operations.
 	 */
-	constructor(databaseService) {
+	constructor(databaseReference) {
+		// Removed unused dataStructure parameter
 		/**
 		 * @property {object} databaseService - A low-level service for direct database operations.
 		 */
-		this.databaseService = databaseService;
+		this.databaseService = databaseReference;
 		/**
 		 * @property {Spreadsheet|null} currentInMemorySpreadsheet - The current in-memory data structure for new sheets.
 		 */
-		this.currentInMemorySpreadsheet = null;
+		// this.currentInMemorySpreadsheet = null;
 	}
 
 	/**
 	 * Retrieves the names of all tables (sheets) from the database.
 	 * @returns {Promise<Array<string>>} A promise that resolves to an array of table names.
 	 */
-	async getTableNames() {
-		return this.databaseService.getTableNames();
+	async getSheetNames() {
+		return await this.databaseService.getSheetNames();
 	}
 
 	/**
@@ -29,7 +31,7 @@ class BackendService {
 	 * @returns {Promise<object|null>} A promise that resolves to the result object (columns and values) or null.
 	 */
 	async getTableData(sheetName) {
-		return this.databaseService.selectAllFromTable(sheetName);
+		return await this.databaseService.selectAllFromTable(sheetName);
 	}
 
 	/**
@@ -38,7 +40,7 @@ class BackendService {
 	 * @returns {Promise<Array<Array<string>>>} A promise that resolves to an array of arrays, where each inner array is column info.
 	 */
 	async getTableInfo(sheetName) {
-		return this.databaseService.getTableInfo(sheetName);
+		return await this.databaseService.getTableInfo(sheetName);
 	}
 
 	/**
@@ -153,93 +155,164 @@ class BackendService {
 
 	/**
 	 * Creates a new table for a new in-memory spreadsheet and populates it with data.
-	 * @param {string} sheetName - The name for the new database sheet.
+	 * @param {string} spreadsheetName - The name for the new database sheet.
 	 * @param {Spreadsheet} inMemorySpreadsheet - The in-memory AVL of AVL instance.
 	 * @returns {Promise<void>} A promise that resolves when the save operation is complete.
 	 */
-	async saveInMemorySpreadsheet(inMemorySpreadsheet) {
-		const sheetName = inMemorySpreadsheet.sheetName;
+	async saveInMemorySpreadsheet(spreadsheetName, inMemorySpreadsheet) {
+		let sheetId = null;
+		const largeDataSet = [];
 
-		//Check if table exists
-		const query = `SELECT * FROM sheets WHERE sheet_name = "${sheetName}"`;
-		const result = await this.databaseService.runQuery(query);
-		if (result && result.values.length == 0) {
-			console.log("Table doesn't exists.");
-			this.databaseService.runQuery(
-				`INSERT INTO sheets (sheet_id, sheet_name) VALUES (NULL, "${sheetName}")`
+		try {
+			if (inMemorySpreadsheet.columnTree.root === null) {
+				throw new Error("In-memory spreadsheet has no columns to save.");
+			}
+
+			let sheetResult = await this.databaseService.findSheetByName(
+				spreadsheetName
 			);
-		}
-		let createTableQuery = `CREATE TABLE "${inMemorySpreadsheet.sheetName}" (c0 INTEGER PRIMARY KEY`;
-		const dbColumnNames = ["c0"];
+			if (sheetResult == null) {
+				console.log("Table doesn't exists.");
+				sheetId = await this.databaseService.addSheet(spreadsheetName);
+				console.log(sheetId);
+				// --- FIX: Get columns from the in-memory tree ---
+				const inMemoryColumns = inMemorySpreadsheet.columnTree._traverseInOrder(
+					inMemorySpreadsheet.columnTree.root
+				);
+				const columnNames = inMemoryColumns.map((col) => col.key);
 
-		const inMemoryColumns = inMemorySpreadsheet.columnTree._traverseInOrder(
-			inMemorySpreadsheet.columnTree.root
-		);
-		inMemoryColumns.forEach((colNode) => {
-			if (colNode.key !== "c0") {
-				createTableQuery += ` ,"${colNode.key}" TEXT`;
-				dbColumnNames.push(colNode.key);
+				await this.databaseService.insertColumnNames(sheetId, columnNames);
+			} else {
+				sheetId = sheetResult[0];
+				console.log("Using existing table with ID:", sheetId);
 			}
-		});
-		createTableQuery += `);`;
-		await this.databaseService.runQuery(createTableQuery);
 
-		const allRowKeys = Array.from(inMemorySpreadsheet.uniqueRowKeys).sort(
-			(a, b) => a - b
-		);
-		const chunkSize = 50;
+			// --- FIX: Correct traversal logic for the AVL of AVL structure ---
+			const inMemoryColumns = inMemorySpreadsheet.columnTree._traverseInOrder(
+				inMemorySpreadsheet.columnTree.root
+			);
 
-		for (let i = 0; i < allRowKeys.length; i += chunkSize) {
-			const batchRowKeys = allRowKeys.slice(i, i + chunkSize);
-			let insertQuery = `INSERT INTO "${sheetName}" (${dbColumnNames
-				.map((c) => `"${c}"`)
-				.join(", ")}) VALUES `;
-			const batchValues = [];
+			for (const col of inMemoryColumns) {
+				// Correct call: use the nested AVLTree instance (col.rows), not its root node
+				const inMemoryRows = col.rows
+					? col.rows._traverseInOrder(col.rows.root)
+					: [];
 
-			for (const rowKey of batchRowKeys) {
-				const rowValues = [`${rowKey}`];
-				for (let j = 1; j < dbColumnNames.length; j++) {
-					const colName = dbColumnNames[j];
-					const cellValue = inMemorySpreadsheet.retrieveCellData(
-						rowKey,
-						colName
-					);
-					rowValues.push(`"${String(cellValue || "").replace(/"/g, '""')}"`);
+				for (const row of inMemoryRows) {
+					const sheetDataRow = {
+						col_id: col.key,
+						row_id: row.key,
+						cell_value: row.value,
+						cell_style: JSON.stringify(row.style), // Assuming style is a property on RowNode
+					};
+					largeDataSet.push(sheetDataRow);
 				}
-				batchValues.push(`(${rowValues.join(", ")})`);
 			}
-			if (batchValues.length > 0) {
-				insertQuery += batchValues.join(", ") + ";";
-				await this.databaseService.runQuery(insertQuery);
-			}
+
+			// Await the bulk insert call
+			await this.databaseService.insertBulkData(sheetId, largeDataSet);
+			console.log(`Successfully saved in-memory spreadsheet to DB.`);
+		} catch (error) {
+			console.error("Error saving in-memory spreadsheet:", error);
+			throw error; // Re-throw to allow the calling UI function to handle it
 		}
 	}
 
+	async loadSpreadsheet(spreadsheetName) {
+		try {
+			if (spreadsheetName == null) {
+				return null;
+			}
+			const spreadsheet = new Spreadsheet(spreadsheetName);
+
+			//check for sheet presence
+			let sheetResult = await this.databaseService.findSheetByName(
+				spreadsheetName
+			);
+
+			if (sheetResult == null) {
+				console.log("Table doesn't exists.");
+				throw new Error("Sheet not found!!");
+			}
+
+			const sheetId = sheetResult[0];
+
+			//fetch columns
+			const columnData = await this.databaseService.getSheetColumns(sheetId);
+			if (columnData == null) {
+				throw new Error("No Columns Found");
+			}
+			for (const col of columnData) {
+				spreadsheet.columns.push(col[0]);
+			}
+
+			//fetch data
+			const sheetData = await this.databaseService.getSheetData(sheetId);
+			if (sheetData == null) {
+				throw new Error("No Data found!!");
+			}
+			console.log(sheetData);
+			for (const data of sheetData) {
+				spreadsheet.insertData(data[2], data[1], data[3], JSON.parse(data[4]));
+			}
+			spreadsheet.maxRows = sheetData.length;
+			return spreadsheet;
+		} catch (error) {
+			console.log(error);
+			throw new Error("Error Loading Sheet From DB!!");
+		}
+	}
+
+	/**
+	 * Loads a database dump file into the database.
+	 * @param {File} file - The dump file.
+	 * @returns {Promise<void>}
+	 */
 	async loadDump(file) {
-		this.databaseService.loadDump(file);
+		await this.databaseService.loadDump(file);
 	}
 
+	/**
+	 * Executes a SQL schema script.
+	 * @param {string} schemaSQL - The schema SQL as a string.
+	 * @returns {Promise<void>}
+	 */
 	async runSchema(schemaSQL) {
-		this.databaseService.runSchema(schemaSQL);
+		await this.databaseService.runSchema(schemaSQL);
 	}
 
+	/**
+	 * Executes a SQL query.
+	 * @param {string} query - The query string.
+	 * @returns {Promise<object|null>} A promise resolving to the query result.
+	 */
 	async runQuery(query) {
-		this.databaseService.runQuery(query);
+		return await this.databaseService.runQuery(query);
 	}
 
-	getTableInfo(sheetName) {
-		this.databaseService.getTableInfo(sheetName);
+	/**
+	 * Retrieves table information using PRAGMA.
+	 * @param {string} sheetName - The sheet name.
+	 * @returns {Promise<Array<Array<string>>>}
+	 */
+	async getTableMetadata(sheetName) {
+		return await this.databaseService.getTableMetadata(sheetName);
 	}
 
-	getTableMetadata(sheetName) {
-		this.databaseService.getTableMetadata(sheetName);
+	/**
+	 * Retrieves foreign key constraints for a table.
+	 * @param {string} sheetName - The sheet name.
+	 * @returns {Promise<Array<Array<any>>>}
+	 */
+	async getForeignKeyList(sheetName) {
+		return await this.databaseService.getForeignKeyList(sheetName);
 	}
 
-	getForeignKeyList(sheetName) {
-		this.databaseService.getForeignKeyList(sheetName);
-	}
-
+	/**
+	 * Exports the database as a dump.
+	 * @returns {Promise<Uint8Array>} A promise resolving to the database dump.
+	 */
 	async exportDb() {
-		this.databaseService.exportDb();
+		return await this.databaseService.exportDb();
 	}
 }

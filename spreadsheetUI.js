@@ -18,8 +18,6 @@ class SpreadsheetUI {
 		this.dragStartRowKey = null;
 		this.dragStartColKey = null;
 
-		this.activeSheetName = null;
-		this.sheetColList = [];
 		this.currentInMemorySpreadsheet = null;
 	}
 
@@ -63,22 +61,40 @@ class SpreadsheetUI {
 
 		document
 			.getElementById("closeSidePanelBtn")
-			?.addEventListener("click", () => this.closeSidePanel());
+			?.addEventListener("click", (event) => {
+				event.preventDefault();
+				this.closeSidePanel();
+			});
 		document
 			.getElementById("addNewSheetInputBtn")
-			?.addEventListener("click", () => this.addNewSheetInput());
+			?.addEventListener("click", (event) => {
+				event.preventDefault();
+				this.addNewSheetInput();
+			});
 		document
 			.getElementById("renderDbDumpInputBtn")
-			?.addEventListener("click", () => this.renderDbDumpInput());
+			?.addEventListener("click", (event) => {
+				event.preventDefault();
+				this.renderDbDumpInput();
+			});
 		document
 			.getElementById("renderSchemaInputBtn")
-			?.addEventListener("click", () => this.renderSchemaInput());
+			?.addEventListener("click", (event) => {
+				event.preventDefault();
+				this.renderSchemaInput();
+			});
 		document
 			.getElementById("renderSQLInputBtn")
-			?.addEventListener("click", () => this.renderSQLInput());
+			?.addEventListener("click", (event) => {
+				event.preventDefault();
+				this.renderSQLInput();
+			});
 		document
 			.getElementById("openSidePanelOpener")
-			?.addEventListener("click", () => this.openSidePanel());
+			?.addEventListener("click", (event) => {
+				event.preventDefault();
+				this.openSidePanel();
+			});
 	}
 
 	/**
@@ -161,22 +177,27 @@ class SpreadsheetUI {
 	addNewSheetInput() {
 		const space = document.getElementById("rest-all-input");
 		space.innerHTML = "";
+
 		const userInputDiv = document.createElement("div");
 		userInputDiv.id = "user-input";
+
 		const rowsInput = document.createElement("input");
 		rowsInput.type = "number";
 		rowsInput.id = "user-rows";
 		rowsInput.placeholder = "Enter number of rows";
 		userInputDiv.appendChild(rowsInput);
+
 		const columnsInput = document.createElement("input");
 		columnsInput.type = "number";
 		columnsInput.id = "user-columns";
 		columnsInput.placeholder = "Enter number of columns (max 26)";
 		userInputDiv.appendChild(columnsInput);
+
 		const createButton = document.createElement("button");
 		createButton.textContent = "Create New Sheet";
-		createButton.addEventListener("click", () => {
-			this.startNewSpreadsheet();
+		createButton.addEventListener("click", (event) => {
+			event.preventDefault();
+			this.startBlankSpreadsheet();
 		});
 		userInputDiv.appendChild(createButton);
 		space.appendChild(userInputDiv);
@@ -195,6 +216,7 @@ class SpreadsheetUI {
 		fileInput.id = "dbDumpFileInput";
 		fileInput.style.marginLeft = "10px";
 		fileInput.addEventListener("change", (event) => {
+			event.preventDefault();
 			this.handleDbDumpFile(event);
 		});
 		space.appendChild(fileInput);
@@ -213,6 +235,7 @@ class SpreadsheetUI {
 		fileInput.id = "schemaFileInput";
 		fileInput.style.marginLeft = "10px";
 		fileInput.addEventListener("change", (event) => {
+			event.preventDefault();
 			this.handleSchemaFile(event);
 		});
 		space.appendChild(fileInput);
@@ -235,7 +258,10 @@ class SpreadsheetUI {
 		const submitButton = document.createElement("button");
 		submitButton.textContent = "Submit";
 		space.appendChild(submitButton);
-		submitButton.addEventListener("click", () => this.executeUserQuery());
+		submitButton.addEventListener("click", (event) => {
+			event.preventDefault();
+			this.executeUserQuery();
+		});
 		this.closeSidePanel();
 	}
 
@@ -246,7 +272,7 @@ class SpreadsheetUI {
 	async handleDbDumpFile(event) {
 		try {
 			const file = event.target.files[0];
-			await this.spreadsheetService.databaseService.loadDump(file);
+			await this.spreadsheetService.loadDump(file);
 			this.renderSheetsNames();
 			this.openSidePanel();
 		} catch (error) {
@@ -265,9 +291,7 @@ class SpreadsheetUI {
 		reader.readAsText(file);
 		reader.onload = async (e) => {
 			try {
-				await this.spreadsheetService.databaseService.runSchema(
-					e.target.result
-				);
+				await this.spreadsheetService.runSchema(e.target.result);
 				this.renderSheetsNames();
 				this.openSidePanel();
 			} catch (error) {
@@ -288,7 +312,7 @@ class SpreadsheetUI {
 		}
 		console.log("Executing query:", query);
 		try {
-			const res = await this.spreadsheetService.databaseService.runQuery(query);
+			const res = await this.spreadsheetService.runQuery(query);
 			const output = document.getElementById("user-select");
 			output.innerHTML = "";
 			if (res) {
@@ -353,11 +377,13 @@ class SpreadsheetUI {
 	 * Initiates the creation of a new in-memory spreadsheet and prepares the UI.
 	 * This does NOT immediately save to the database.
 	 */
-	async startNewSpreadsheet() {
+	async startBlankSpreadsheet() {
 		const rowCountInput = document.getElementById("user-rows");
 		const colCountInput = document.getElementById("user-columns");
+
 		const rows = parseInt(rowCountInput.value, 10);
 		const columns = parseInt(colCountInput.value, 10);
+
 		if (isNaN(rows) || rows <= 0 || isNaN(columns) || columns <= 0) {
 			alert("Please enter valid positive numbers for rows and columns.");
 			return;
@@ -365,69 +391,63 @@ class SpreadsheetUI {
 
 		const tempSheetName = `temp_sheet_${Math.floor(Math.random() * 100000)}`;
 		this.currentInMemorySpreadsheet = new Spreadsheet(tempSheetName);
-		this.activeSheetName = tempSheetName;
-		const newColList = ["c0"];
 		for (let i = 1; i <= columns; i++) {
-			newColList.push(this.#toColumnName(i));
+			this.currentInMemorySpreadsheet.columns.push(this.#toColumnName(i));
 		}
-		this.sheetColList = newColList;
 		this.#renderTableStructure(tempSheetName);
-		this.#renderColHead(tempSheetName, newColList);
-		this.#renderSheetFeatures(tempSheetName, newColList, true);
+		this.#renderColHead(tempSheetName, this.currentInMemorySpreadsheet.columns);
+		this.#renderSheetFeatures(
+			tempSheetName,
+			this.currentInMemorySpreadsheet.columns,
+			true
+		);
 		this.#addResizing();
 		this.#clearSelection();
+
 		const tableBody = document.getElementById(`${tempSheetName}-data-input`);
 		tableBody.innerHTML = "";
+
 		for (let i = 0; i < rows; i++) {
 			const currentRowId = i + 1;
 			const bodyRow = document.createElement("tr");
-			for (let j = 0; j < newColList.length; j++) {
+
+			for (let j = 0; j < columns; j++) {
+				const colName = this.currentInMemorySpreadsheet.columns[j];
 				const tableCol = document.createElement("td");
 				if (j !== 0) {
 					const inputContainer = document.createElement("div");
 					inputContainer.className = "container";
 					const input = document.createElement("input");
-					input.className = `${newColList[j]} input-cell`;
+					input.className = `${colName} input-cell`;
 					input.type = "text";
 					input.name = tempSheetName;
 					input.value = "";
 					input.dataset.rowno = currentRowId;
-					input.dataset.colname = newColList[j];
+					input.dataset.colname = colName;
 					input.dataset.isinmemory = true;
 					input.addEventListener("input", (event) => {
-						this.handleInputChange(event, currentRowId, newColList[j], true);
+						event.preventDefault();
+						this.handleInputChange(event, currentRowId, colName, true);
 					});
+
 					const dropdownList = document.createElement("ul");
 					dropdownList.type = "none";
-					dropdownList.id = `${tempSheetName}-${newColList[j]}-dropdown`;
+					dropdownList.id = `${tempSheetName}-${colName}-dropdown`;
 					dropdownList.className = "dropdown";
+
 					inputContainer.appendChild(input);
 					inputContainer.appendChild(dropdownList);
 					tableCol.appendChild(inputContainer);
-					tableCol.classList.add(newColList[j]);
+					tableCol.classList.add(colName);
 				} else {
 					tableCol.innerHTML = `${currentRowId}`;
-					tableCol.classList.add(newColList[j]);
+					tableCol.classList.add(colName);
 				}
 				bodyRow.appendChild(tableCol);
 			}
+
 			tableBody.appendChild(bodyRow);
-			this.currentInMemorySpreadsheet.insertData(
-				currentRowId,
-				"c0",
-				currentRowId
-			);
-			for (let j = 1; j < newColList.length; j++) {
-				this.currentInMemorySpreadsheet.insertData(
-					currentRowId,
-					newColList[j],
-					""
-				);
-			}
 		}
-		alert(
-			`New temporary spreadsheet '${tempSheetName}' created. Data will be in-memory until saved.`
-		);
 	}
 
 	/**
@@ -438,13 +458,11 @@ class SpreadsheetUI {
 	async renderSheet(sheetName) {
 		this.closeSidePanel();
 		this.#clearSelection();
-		this.activeSheetName = sheetName;
-		this.currentInMemorySpreadsheet = null;
-		this.#renderTableStructure(sheetName);
-		const cols = await this.spreadsheetService.getTableInfo(sheetName);
-		this.sheetColList = cols.map((c) => c[1]);
-		this.#renderColHead(sheetName, this.sheetColList);
-		this.#renderSheetFeatures(sheetName, this.sheetColList, false);
+		this.currentInMemorySpreadsheet =
+			this.spreadsheetService.loadSpreadsheet(sheetName);
+		this.#renderTableStructure();
+		this.#renderColHead();
+		this.#renderSheetFeatures(false);
 		await this.#renderTableData(sheetName);
 		this.#addResizing();
 	}
@@ -462,9 +480,10 @@ class SpreadsheetUI {
 			const headerDesc = document.createElement("th");
 			headerDesc.innerHTML = `${colName}`;
 			headerDesc.classList.add(colName);
-			headerDesc.addEventListener("click", (e) =>
-				this.selectColumn(colName, e)
-			);
+			headerDesc.addEventListener("click", (e) => {
+				e.preventDefault();
+				this.selectColumn(colName, e);
+			});
 			const div = document.createElement("div");
 			div.classList.add(`${colName}_resize`);
 			div.classList.add(`resize`);
@@ -478,7 +497,8 @@ class SpreadsheetUI {
 	 * @param {string} sheetName - The name of the sheet.
 	 * @private
 	 */
-	#renderTableStructure(sheetName) {
+	#renderTableStructure() {
+		const sheetName = this.currentInMemorySpreadsheet.sheetName;
 		const userSelect = document.getElementById("user-select");
 		userSelect.innerHTML = `
             <table border="1">
@@ -505,6 +525,7 @@ class SpreadsheetUI {
 				const startWidth = th.offsetWidth;
 				const startX = e.pageX;
 				const onMouseMove = (moveEvent) => {
+					moveEvent.preventDefault();
 					const newWidth = startWidth + (moveEvent.pageX - startX);
 					if (newWidth >= 50) {
 						document.querySelectorAll(`.${col_class}`).forEach((element) => {
@@ -516,7 +537,8 @@ class SpreadsheetUI {
 						});
 					}
 				};
-				const onMouseUp = () => {
+				const onMouseUp = (e) => {
+					e.preventDefault();
 					document.removeEventListener("mousemove", onMouseMove);
 					document.removeEventListener("mouseup", onMouseUp);
 				};
@@ -528,63 +550,56 @@ class SpreadsheetUI {
 	}
 
 	/**
-	 * Renders the table data by fetching it from the database.
-	 * @param {string} sheetName - The name of the sheet to render data for.
-	 * @private
-	 */
-	/**
 	 * Renders the table data by fetching it from the database AND attaches click listeners for row headers.
 	 * @param {string} sheetName - The name of the sheet to render data for.
 	 * @private
 	 */
-	async #renderTableData(sheetName) {
+	async #renderTableData() {
+		const sheetName = this.currentInMemorySpreadsheet.sheetName;
 		const dataInput = document.getElementById(`${sheetName}-data-input`);
 		dataInput.innerHTML = "";
 		try {
-			const result = await this.spreadsheetService.getTableData(sheetName);
-			if (result) {
-				result.values.forEach((row) => {
-					const tableRow = document.createElement("tr");
-					row.forEach((col, colId) => {
-						const tableCol = document.createElement("td");
-						if (colId !== 0) {
-							const inputContainer = document.createElement("div");
-							inputContainer.className = "container";
-							const input = document.createElement("input");
-							input.className = `${result.columns[colId]} input-cell`;
-							input.type = "text";
-							input.name = sheetName;
-							input.value = col;
-							input.dataset.rowno = row[0];
-							input.dataset.colname = result.columns[colId];
-							input.dataset.isinmemory = false;
-							input.addEventListener("input", async (event) => {
-								await this.handleInputChange(
-									event,
-									row[0],
-									result.columns[colId],
-									false
-								);
-							});
-							const dropdownList = document.createElement("ul");
-							dropdownList.type = "none";
-							dropdownList.id = `${sheetName}-${result.columns[colId]}-dropdown`;
-							dropdownList.className = "dropdown";
-							inputContainer.appendChild(input);
-							inputContainer.appendChild(dropdownList);
-							tableCol.appendChild(inputContainer);
-							tableCol.classList.add(`${result.columns[colId]}`);
-						} else {
-							tableCol.innerHTML = `${col}`;
-							tableCol.classList.add(result.columns[colId]);
-							tableCol.addEventListener("click", (e) =>
-								this.selectRow(row[0], e)
-							);
-						}
-						tableRow.appendChild(tableCol);
-					});
-					dataInput.appendChild(tableRow);
+			const rows = this.currentInMemorySpreadsheet.maxRows;
+			// const result = await this.spreadsheetService.getTableData(sheetName);
+			for (let rowno = 0; rowno < rows; rowno++) {
+				const tableRow = document.createElement("tr");
+				this.currentInMemorySpreadsheet.columns.forEach((col, colId) => {
+					const tableCol = document.createElement("td");
+					if (colId !== 0) {
+						const inputContainer = document.createElement("div");
+						inputContainer.className = "container";
+						const input = document.createElement("input");
+						input.className = `${col} input-cell`;
+						input.type = "text";
+						input.name = sheetName;
+						const cellVal = this.currentInMemorySpreadsheet.retrieveCellData(
+							rowno,
+							col
+						);
+						input.value = cellVal == null ? "" : cellVal;
+						input.dataset.rowno = rowno;
+						input.dataset.colname = result.columns[colId];
+						input.dataset.isinmemory = false;
+						input.addEventListener("input", async (event) => {
+							event.preventDefault();
+							await this.handleInputChange(event, rowno, col, false);
+						});
+						const dropdownList = document.createElement("ul");
+						dropdownList.type = "none";
+						dropdownList.id = `${sheetName}-${result.columns[colId]}-dropdown`;
+						dropdownList.className = "dropdown";
+						inputContainer.appendChild(input);
+						inputContainer.appendChild(dropdownList);
+						tableCol.appendChild(inputContainer);
+						tableCol.classList.add(`${result.columns[colId]}`);
+					} else {
+						tableCol.innerHTML = `${col}`;
+						tableCol.classList.add(col);
+						tableCol.addEventListener("click", (e) => this.selectRow(rowno, e));
+					}
+					tableRow.appendChild(tableCol);
 				});
+				dataInput.appendChild(tableRow);
 			}
 		} catch (error) {
 			console.error(error);
@@ -599,7 +614,9 @@ class SpreadsheetUI {
 	 * @param {boolean} isInMemory - True if this is an in-memory spreadsheet (show save button), false otherwise.
 	 * @private
 	 */
-	#renderSheetFeatures(sheetName, sheetColList, isInMemory) {
+	#renderSheetFeatures(isInMemory) {
+		const sheetName = this.currentInMemorySpreadsheet.sheetName;
+		const sheetColList = this.currentInMemorySpreadsheet.columns;
 		const restInput = document.getElementById("rest-all-input");
 		restInput.innerHTML = "";
 
@@ -620,8 +637,10 @@ class SpreadsheetUI {
 		insertRowsButton.dataset.colList = sheetColList;
 		insertRowsButton.dataset.isInMemory = isInMemory.toString();
 		insertRowsButton.addEventListener("click", (event) => {
+			event.preventDefault();
 			const btn = event.currentTarget;
 			this.insertRows(
+				event,
 				btn.dataset.sheetName,
 				btn.dataset.colList,
 				btn.dataset.isInMemory === "true"
@@ -634,8 +653,9 @@ class SpreadsheetUI {
 			saveToDbButton.textContent = `Save '${sheetName}' to DB`;
 			saveToDbButton.id = "saveToDbBtn";
 			saveToDbButton.style.marginLeft = "10px";
-			saveToDbButton.addEventListener("click", () => {
-				this.saveInMemorySpreadsheetToDb();
+			saveToDbButton.addEventListener("click", (event) => {
+				event.preventDefault();
+				this.saveInMemorySpreadsheetToDb(event);
 			});
 			mainContainerDiv.appendChild(saveToDbButton);
 		}
@@ -645,6 +665,7 @@ class SpreadsheetUI {
 		saveJsonButton.style.marginLeft = "10px";
 		saveJsonButton.dataset.sheetName = sheetName;
 		saveJsonButton.addEventListener("click", (event) => {
+			event.preventDefault();
 			this.saveJson(event);
 		});
 		mainContainerDiv.appendChild(saveJsonButton);
@@ -654,6 +675,7 @@ class SpreadsheetUI {
 		loadJsonInput.style.marginLeft = "10px";
 		loadJsonInput.dataset.sheetName = sheetName;
 		loadJsonInput.addEventListener("change", (event) => {
+			event.preventDefault();
 			this.loadJson(event);
 		});
 		mainContainerDiv.appendChild(loadJsonInput);
@@ -663,6 +685,7 @@ class SpreadsheetUI {
 		generateDbDumpButton.style.marginLeft = "10px";
 		generateDbDumpButton.dataset.sheetName = sheetName;
 		generateDbDumpButton.addEventListener("click", (event) => {
+			event.preventDefault();
 			this.handleGenerateDBdump(event);
 		});
 		mainContainerDiv.appendChild(generateDbDumpButton);
@@ -676,7 +699,7 @@ class SpreadsheetUI {
 	 * @param {string} colsListString - Comma-separated string of column names.
 	 * @param {boolean} isInMemory - True if inserting into the in-memory AVL spreadsheet.
 	 */
-	async insertRows(sheetName, colsListString, isInMemory) {
+	async insertRows(event, sheetName, colsListString, isInMemory) {
 		const rowsInput = document.getElementById(`${sheetName}-row-input`);
 		const rowsToInsert = parseInt(rowsInput.value, 10);
 		if (isNaN(rowsToInsert) || rowsToInsert <= 0) {
@@ -696,10 +719,9 @@ class SpreadsheetUI {
 			startRowId = maxKey + 1;
 		} else {
 			try {
-				const metadata =
-					await this.spreadsheetService.databaseService.getTableMetadata(
-						sheetName
-					);
+				const metadata = await this.spreadsheetService.getTableMetadata(
+					sheetName
+				);
 				if (metadata && metadata.max_id !== null) {
 					startRowId = parseInt(metadata.max_id, 10) + 1;
 				}
@@ -728,6 +750,7 @@ class SpreadsheetUI {
 					input.dataset.colname = columnsArray[j];
 					input.dataset.isinmemory = isInMemory;
 					input.addEventListener("input", (event) => {
+						event.preventDefault();
 						this.handleInputChange(
 							event,
 							currentRowId,
@@ -746,9 +769,10 @@ class SpreadsheetUI {
 				} else {
 					tableCol.innerHTML = `${currentRowId}`;
 					tableCol.classList.add(columnsArray[j]);
-					tableCol.addEventListener("click", (e) =>
-						this.selectRow(currentRowId, e)
-					);
+					tableCol.addEventListener("click", (e) => {
+						e.preventDefault();
+						this.selectRow(currentRowId, e);
+					});
 				}
 				bodyRow.appendChild(tableCol);
 			}
@@ -859,14 +883,13 @@ class SpreadsheetUI {
 		try {
 			await this.spreadsheetService.saveInMemorySpreadsheet(
 				newDbSheetName,
-				spreadsheet
+				this.currentInMemorySpreadsheet
 			);
 			alert(
 				`Spreadsheet '${spreadsheet.sheetName}' successfully saved to database as '${newDbSheetName}'.`
 			);
 			this.currentInMemorySpreadsheet = null;
 			this.renderSheetsNames();
-			this.renderSheet(newDbSheetName);
 		} catch (error) {
 			console.error("Error saving in-memory spreadsheet to DB:", error);
 			alert(`Error saving spreadsheet to database: ${error.message}`);
@@ -878,6 +901,7 @@ class SpreadsheetUI {
 	 * @param {Event} event - The click event (not directly used, but passed for consistency).
 	 */
 	async handleGenerateDBdump(event) {
+		event.preventDefault();
 		try {
 			const dump = await this.spreadsheetService.exportDb();
 			const dumpBlob = new Blob([dump], { type: "application/octet-stream" });
@@ -901,6 +925,7 @@ class SpreadsheetUI {
 	 * @param {Event} event - The click event.
 	 */
 	async saveJson(event) {
+		event.preventDefault();
 		const sheetName = event.target.name;
 		try {
 			const res = await this.spreadsheetService.selectAllFromTable(sheetName);
@@ -929,6 +954,7 @@ class SpreadsheetUI {
 	 * @param {Event} event - The file input change event.
 	 */
 	async loadJson(event) {
+		event.preventDefault();
 		const file = event.target.files[0];
 		const sheetName = event.target.name; // This is the name of the existing sheet
 
@@ -1093,7 +1119,7 @@ class SpreadsheetUI {
 		sheetList.innerHTML = ""; // Clear existing list
 
 		try {
-			const tableNames = await this.spreadsheetService.getTableNames();
+			const tableNames = await this.spreadsheetService.getSheetNames();
 			if (tableNames.length > 0) {
 				tableNames.forEach((tableName) => {
 					const anch = document.createElement("a");
@@ -1125,9 +1151,11 @@ class SpreadsheetUI {
 			.forEach((tr) => tr.classList.remove("selected-row"));
 
 		// Remove 'selected-col' class from all elements that might have it (THs and TDs)
-		if (this.sheetColList && this.sheetColList.length > 0) {
-			this.sheetColList.forEach((colClass) => {
-				console.log(colClass);
+		if (
+			this.currentInMemorySpreadsheet?.columns &&
+			this.currentInMemorySpreadsheet.columns.length > 0
+		) {
+			this.currentInMemorySpreadsheet.columns.forEach((colClass) => {
 				document
 					.querySelectorAll(`.${colClass}`)
 					.forEach((el) => el.classList.remove("selected-col"));
@@ -1144,12 +1172,13 @@ class SpreadsheetUI {
 	 * Applies CSS classes to highlight the currently selected row or column.
 	 * @private
 	 */
-	#highlightSelection() {
-		if (!this.activeSheetName) return; // No active sheet to highlight on
+	#highlightSelection(event) {
+		event.preventDefault();
+		if (!this.currentInMemorySpreadsheet) return; // No active sheet to highlight on
 
 		if (this.activeSelectionType === "row" && this.selectedRowKey !== null) {
 			const tableBody = document.getElementById(
-				`${this.activeSheetName}-data-input`
+				`${this.currentInMemorySpreadsheet.sheetName}-data-input`
 			);
 			if (tableBody) {
 				// Find the <tr> element that contains the selected row key
@@ -1238,7 +1267,7 @@ class SpreadsheetUI {
 		const start = Math.min(startKey, endKey);
 		const end = Math.max(startKey, endKey);
 		const tableBody = document.getElementById(
-			`${this.activeSheetName}-data-input`
+			`${this.currentInMemorySpreadsheet.sheetName}-data-input`
 		);
 		if (tableBody) {
 			Array.from(tableBody.children).forEach((tr) => {
@@ -1253,7 +1282,7 @@ class SpreadsheetUI {
 	#selectColumnRange(startKey, endKey) {
 		this.selectedColKeys.clear();
 		this.selectedRowKeys.clear();
-		const colNames = this.sheetColList;
+		const colNames = this.currentInMemorySpreadsheet.columns;
 		const startIndex = colNames.indexOf(startKey);
 		const endIndex = colNames.indexOf(endKey);
 		const start = Math.min(startIndex, endIndex);
@@ -1264,6 +1293,7 @@ class SpreadsheetUI {
 	}
 
 	selectRow(rowKey, event) {
+		event.preventDefault();
 		if (event.shiftKey && this.lastClickedRowKey !== null) {
 			this.#selectRowRange(this.lastClickedRowKey, rowKey);
 		} else if (event.ctrlKey || event.metaKey) {
@@ -1321,7 +1351,7 @@ class SpreadsheetUI {
 		this.#removeAllHighlights();
 		this.selectedRowKeys.forEach((rowKey) => {
 			const tableBody = document.getElementById(
-				`${this.activeSheetName}-data-input`
+				`${this.currentInMemorySpreadsheet.sheetName}-data-input`
 			);
 			const selectedRowElement =
 				tableBody &&
@@ -1358,7 +1388,7 @@ class SpreadsheetUI {
 		}
 		this.selectedRowKeys.forEach((rowKey) => {
 			const tableBody = document.getElementById(
-				`${this.activeSheetName}-data-input`
+				`${this.currentInMemorySpreadsheet.sheetName}-data-input`
 			);
 			const selectedRowElement =
 				tableBody &&

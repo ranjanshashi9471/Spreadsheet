@@ -1,111 +1,68 @@
-*Virtual Disk Management System:   
+# Spreadsheet Application
 
-*Overview:
-This project is a Virtual Disk Management System implemented in C. It simulates a file system where users can create, update, delete, and read files within a virtual disk. The system operates on Linux and is designed for efficient file handling.
+A web-based spreadsheet application built with JavaScript, featuring an in-memory AVL tree data structure for efficient data manipulation, and a SQLite database backend (via sql.js) for persistent storage. The app provides a modern UI for spreadsheet operations, including sheet management, data editing, and import/export capabilities.
 
-*Features
+## Features
 
-1.File Addition: Add files to the virtual disk while encoding file names and sizes.
+- **In-Memory Spreadsheet:** Uses an AVL tree of AVL trees for fast row/column operations.
+- **Persistent Storage:** Data is saved in a SQLite database (runs in-browser using sql.js).
+- **Sheet Management:** Create, load, and manage multiple sheets (tables).
+- **Data Editing:** Edit cells, insert rows, and update data with UI interactions.
+- **Import/Export:**
+  - Load database dump files and SQL schema files.
+  - Export database as a dump or save sheet data as JSON.
+  - Load sheet data from JSON files.
+- **Foreign Key Suggestions:** UI provides dropdown suggestions for foreign key columns.
+- **Column/Row Selection:** Select, highlight, and apply styles to rows/columns.
+- **Modern UI:** Responsive design with side panel navigation and interactive table features.
 
-2.File Retrieval: Retrieve files from the virtual disk based on file metadata.
+## Project Structure
 
-3.File Listing: List all files stored in the virtual disk with their sizes.
+```
+constants.js            # Selection type constants
+main.js                 # App entry point and initialization
+index.html              # Main HTML file
+style.css               # Application styles
+spreadsheetUI.js        # UI logic and rendering
+spreadsheetService.js   # Backend service (business logic, DB API)
+dbOps.js                # Database service (SQLite operations)
+datastructure.js        # AVL tree and Spreadsheet data structures
+sql.js                  # sql.js (SQLite in browser)
+overwrite_styles.js     # (Optional) Custom style overrides
+schema.sql              # Example schema file
+readme.md               # This file
+```
 
-4.Virtual Disk Creation: Initialize a new virtual disk for file storage.
+## How It Works
 
-*Build System
+- **Initialization:**
+  - `main.js` initializes the database and backend, then starts the UI.
+- **UI Layer:**
+  - `spreadsheetUI.js` handles rendering, user interactions, and calls backend services.
+- **Backend Service:**
+  - `spreadsheetService.js` provides high-level spreadsheet operations and interacts with the database.
+- **Database Layer:**
+  - `dbOps.js` manages all SQLite operations using sql.js.
+- **Data Structure:**
+  - `datastructure.js` implements the AVL tree-based spreadsheet for in-memory operations.
 
-The project uses a Makefile for efficient compilation and management of dependencies.
+## Getting Started
 
-*Makefile Targets
+1. **Clone the repository** and open the project folder.
+2. **Open `index.html` in a modern browser** (no server required; all logic runs client-side).
+3. **Use the UI** to create sheets, edit data, import/export, and manage your spreadsheets.
 
--all: Compiles all executables (create_vd, vd_add, vd_get, vd_ls).
+## Development Notes
 
--create_vd: Creates the virtual disk.
+- The app is modular, with clear separation between UI, backend logic, and database operations.
+- All data is stored in-browser using sql.js (no external server required).
+- The AVL tree structure enables efficient in-memory manipulation before saving to the database.
+- The UI supports keyboard navigation, drag selection, and style application for rows/columns.
 
--vd_add: Adds a file to the virtual disk.
+## Dependencies
 
--vd_get: Retrieves a file from the virtual disk.
+- [sql.js](https://github.com/sql-js/sql.js) (bundled as `sql.js`)
 
--vd_ls: Lists all files in the virtual disk.
+## License
 
--clean: Removes all compiled files and object files.
-
-*Compilation Commands
-
--Each .o file is compiled using gcc -c.
-
--The archive arc.a is created with ar rcs.
-
--Final executables are linked using gcc.
-
-*Code Structure
-
-1.create_vd.c
-
-  -Initializes a new virtual disk file and prepares it for use. It sets up metadata for file storage.
-
-2.vd_add.c
-
-Adds a file to the virtual disk:
-
--Opens the virtual disk and the input file.
-
--Encodes file name and size using encode function.
-
--Appends file data to the virtual disk while updating metadata.
-
-3.vd_get.c
-
-Retrieves a file from the virtual disk:
-
--Reads metadata to locate the file.
-
--Decodes file name and size using decode_file function.
-
--Extracts the file content and writes it to an output file.
-
-4.vd_ls.c
-
-Lists all files in the virtual disk:
-
--Decodes metadata to display file names and sizes.
-
-5.encode.c
-
-Encodes file names and metadata for storage in the virtual disk.
-
-6.decode_file.c
-
-Decodes metadata to retrieve file names and sizes.
-
-*Usage
-
-Build the Project:
-
-Run the following command to compile all components:
-
-    :=  make all
-	
--Create a Virtual Disk
-     :=  ./create_vd <disk_name>
-    
--Add a File
-
-   := ./vd_add <disk_name> <file_path>
-   
--Retrieve a File
-
-  :=  ./vd_get <disk_name> <file_index> <output_file>
-  
--Retrieve a File
-
-   :=  ./vd_get <disk_name> <file_index> <output_file>
-    
--Retrieve a File
-
-   := ./vd_get <disk_name> <file_index> <output_file>
-   
--Clean Build Artifacts
-
-   := make clean
+MIT License

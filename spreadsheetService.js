@@ -85,7 +85,7 @@ class BackendService {
 	 * @param {string} value - The current value of the cell.
 	 * @returns {Promise<object>} A promise that resolves to an object containing foreign key suggestions or an update query.
 	 */
-	async getCellUpdateInfo(sheetName, rowno, colname, value) {
+	async getCellUpdateInfo(sheetName, rowno, colno, value) {
 		const foreignKeysResult = await this.databaseService.getForeignKeyList(
 			sheetName
 		);
@@ -167,16 +167,22 @@ class BackendService {
 			let sheetResult = await this.databaseService.findSheetByName(
 				spreadsheetName
 			);
+			// Start a transaction
+			await this.databaseService.startTransaction();
+
 			if (sheetResult == null) {
 				console.log("Table doesn't exists.");
-				sheetId = await this.databaseService.addSheet(spreadsheetName);
-				console.log(sheetId);
+				sheetId = await this.databaseService.addSheet(
+					spreadsheetName,
+					inMemorySpreadsheet.maxRows
+				);
 				await this.databaseService.insertColumnNames(
 					sheetId,
 					inMemorySpreadsheet.columns
 				);
 			} else {
 				sheetId = sheetResult[0];
+				await this.databaseService.setUpdatedAtTimestamp(sheetId);
 				console.log("Using existing table with ID:", sheetId);
 			}
 
@@ -202,8 +208,11 @@ class BackendService {
 
 			// Await the bulk insert call
 			await this.databaseService.insertBulkData(sheetId, largeDataSet);
+			await this.databaseService.commitTransaction();
+
 			console.log(`Successfully saved in-memory spreadsheet to DB.`);
 		} catch (error) {
+			await this.databaseService.rollbackTransaction();
 			console.error("Error saving in-memory spreadsheet:", error);
 			throw error; // Re-throw to allow the calling UI function to handle it
 		}
@@ -227,6 +236,7 @@ class BackendService {
 			}
 
 			const sheetId = sheetResult[0];
+			spreadsheet.maxRows = sheetResult[2];
 
 			//fetch columns
 			const columnData = await this.databaseService.getSheetColumns(sheetId);
@@ -245,7 +255,6 @@ class BackendService {
 			for (const data of sheetData) {
 				spreadsheet.insertData(data[2], data[1], data[3], JSON.parse(data[4]));
 			}
-			spreadsheet.maxRows = sheetData.length;
 			return spreadsheet;
 		} catch (error) {
 			console.log(error);

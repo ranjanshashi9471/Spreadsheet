@@ -31,7 +31,10 @@ class DatabaseService {
 
                 CREATE TABLE IF NOT EXISTS sheets (
                     sheet_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    sheet_name TEXT UNIQUE NOT NULL
+                    sheet_name TEXT UNIQUE NOT NULL,
+					max_row INTEGER DEFAULT 0,
+					created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+					updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
 
                 CREATE TABLE IF NOT EXISTS sheet_columns (
@@ -56,6 +59,33 @@ class DatabaseService {
 			console.error("Error initializing database:", error);
 			throw error;
 		}
+	}
+
+	/**
+	 * Starts a database transaction.
+	 * @returns {Promise<void>}
+	 */
+	async startTransaction() {
+		this.#ensureDbInitialized();
+		this.db.run("BEGIN TRANSACTION;");
+	}
+
+	/**
+	 * Commits the current database transaction.
+	 * @returns {Promise<void>}
+	 */
+	async commitTransaction() {
+		this.#ensureDbInitialized();
+		this.db.run("COMMIT;");
+	}
+
+	/**
+	 * Rolls back the current database transaction.
+	 * @returns {Promise<void>}
+	 */
+	async rollbackTransaction() {
+		this.#ensureDbInitialized();
+		this.db.run("ROLLBACK;");
 	}
 
 	/**
@@ -118,13 +148,28 @@ class DatabaseService {
 	/**
 	 * Adds a new sheet entry to the sheets table.
 	 * @param {string} sheetName - The name of the new sheet.
+	 * @param {number} maxRow - The maximum number of rows for the sheet.
 	 * @returns {Promise<number>} A promise that resolves to the ID of the newly added sheet.
 	 */
-	async addSheet(sheetName) {
+	async addSheet(sheetName, maxRow) {
 		this.#ensureDbInitialized();
 		// --- FIX: Use db.run for INSERT and get lastInsertRowId ---
-		this.db.run(`INSERT INTO sheets (sheet_name) VALUES (?);`, [sheetName]);
+		this.db.run(`INSERT INTO sheets (sheet_name, max_row) VALUES (?, ?);`, [
+			sheetName,
+			maxRow,
+		]);
 		return this.db.getRowsModified();
+	}
+
+	/**
+	 * Sets the updated_at timestamp for a sheet.
+	 * @param {number} sheetId - The ID of the sheet.
+	 * @returns {Promise<void>}
+	 */
+	async setUpdatedAtTimestamp(sheetId) {
+		this.#ensureDbInitialized();
+		const query = `UPDATE sheets SET updated_at = CURRENT_TIMESTAMP WHERE sheet_id = ?;`;
+		await this.runQuery(query, [sheetId]);
 	}
 
 	/**
@@ -137,17 +182,14 @@ class DatabaseService {
 		this.#ensureDbInitialized();
 		let stmt = null;
 		try {
-			this.db.run("BEGIN TRANSACTION;");
 			stmt = this.db.prepare(
 				`INSERT INTO sheet_columns (sheet_id, column_name) VALUES (?, ?);`
 			);
 			for (let colName of columnNames) {
 				stmt.run([sheetId, colName]);
 			}
-			this.db.run("COMMIT;");
 			console.log("inserted columns into db");
 		} catch (error) {
-			this.db.run("ROLLBACK;");
 			throw new Error("Error inserting column names: " + error.message);
 		} finally {
 			stmt.free();
@@ -177,7 +219,6 @@ class DatabaseService {
 	async insertBulkData(sheetId, largeDataSet) {
 		this.#ensureDbInitialized();
 		let stmt = null;
-		this.db.run("BEGIN TRANSACTION;");
 		try {
 			stmt = this.db.prepare(
 				"INSERT INTO sheet_data (sheet_id, col_id, row_id, cell_value, cell_style) VALUES (?, ?, ?, ?, ?);"
@@ -191,9 +232,7 @@ class DatabaseService {
 					row.cell_style,
 				]);
 			}
-			this.db.run("COMMIT;");
 		} catch (error) {
-			this.db.run("ROLLBACK;");
 			console.error(error);
 			throw new Error("insertBulkData Error inserting bulk data");
 		} finally {
@@ -208,7 +247,7 @@ class DatabaseService {
 	 */
 	async getSheetData(sheetId) {
 		const result = await this.runQuery(
-			`SELECT * FROM sheet_data WHERE sheet_id = ${sheetId};`
+			`SELECT * FROM sheet_data WHERE sheet_id = ${sheetId} ORDER BY col_id;`
 		);
 		console.log(result);
 		return result ? result.values : null;

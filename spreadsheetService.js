@@ -220,7 +220,6 @@ class BackendService {
 
 	async loadSpreadsheet(spreadsheetName) {
 		try {
-			console.log("Loading spreadsheet:", spreadsheetName);
 			if (spreadsheetName == null) {
 				return null;
 			}
@@ -231,7 +230,6 @@ class BackendService {
 				spreadsheetName
 			);
 			if (sheetResult == null) {
-				console.log("Table doesn't exists.");
 				throw new Error("Sheet not found!!");
 			}
 
@@ -244,7 +242,7 @@ class BackendService {
 				throw new Error("No Columns Found");
 			}
 			for (const col of columnData) {
-				spreadsheet.columns.push(col[0]);
+				spreadsheet.columns.push(col[0] - "0");
 			}
 
 			//fetch data
@@ -253,11 +251,18 @@ class BackendService {
 				throw new Error("No Data found!!");
 			}
 			for (const data of sheetData) {
-				spreadsheet.insertData(data[2], data[1], data[3], JSON.parse(data[4]));
+				//data format:
+				// 0: "id", 1: "sheet_id", 2: "col_id", 3: "row_id", 4: "cell_value", 5: "cell_style"
+				spreadsheet.insertData(
+					data[3] - "0",
+					data[2] - "0",
+					data[4],
+					JSON.parse(data[5])
+				);
 			}
 			return spreadsheet;
 		} catch (error) {
-			console.log(error);
+			console.error(error);
 			throw new Error("Error Loading Sheet From DB!!");
 		}
 	}

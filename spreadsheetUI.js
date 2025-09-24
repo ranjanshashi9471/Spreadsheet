@@ -392,7 +392,7 @@ class SpreadsheetUI {
 		this.currentInMemorySpreadsheet.maxRows = rows;
 
 		for (let i = 0; i < columns; i++) {
-			this.currentInMemorySpreadsheet.columns.push(this.#toColumnName(i));
+			this.currentInMemorySpreadsheet.columns.push(i);
 		}
 
 		this.#renderTableStructure(tempSheetName);
@@ -413,36 +413,36 @@ class SpreadsheetUI {
 			const bodyRow = document.createElement("tr");
 
 			for (let j = 0; j < columns; j++) {
-				const colName = this.currentInMemorySpreadsheet.columns[j];
+				const colNo = this.currentInMemorySpreadsheet.columns[j];
 				const tableCol = document.createElement("td");
 				if (j !== 0) {
 					const inputContainer = document.createElement("div");
 					inputContainer.className = "container";
 					const input = document.createElement("input");
-					input.className = `${colName} input-cell`;
+					input.className = `${colNo} input-cell`;
 					input.type = "text";
 					input.name = tempSheetName;
 					input.value = "";
 					input.dataset.rowno = currentRowId;
-					input.dataset.colname = colName;
+					input.dataset.colno = colNo;
 					input.dataset.isinmemory = true;
 					input.addEventListener("input", (event) => {
 						event.preventDefault();
-						this.handleInputChange(event, currentRowId, colName, true);
+						this.handleInputChange(event, currentRowId, colNo, true);
 					});
 
 					const dropdownList = document.createElement("ul");
 					dropdownList.type = "none";
-					dropdownList.id = `${tempSheetName}-${colName}-dropdown`;
+					dropdownList.id = `${tempSheetName}-${colNo}-dropdown`;
 					dropdownList.className = "dropdown";
 
 					inputContainer.appendChild(input);
 					inputContainer.appendChild(dropdownList);
 					tableCol.appendChild(inputContainer);
-					tableCol.classList.add(colName);
+					tableCol.classList.add(colNo);
 				} else {
 					tableCol.innerHTML = `${currentRowId}`;
-					tableCol.classList.add(colName);
+					tableCol.classList.add(colNo);
 					tableCol.addEventListener("click", (e) =>
 						this.selectRow(currentRowId, e)
 					);
@@ -481,10 +481,11 @@ class SpreadsheetUI {
 	#renderColHead() {
 		debugger;
 		const sheetName = this.currentInMemorySpreadsheet.sheetName;
-		const colNames = this.currentInMemorySpreadsheet.columns;
+		const cols = this.currentInMemorySpreadsheet.columns;
 		const tableHeader = document.getElementById(`${sheetName}_header`);
 		tableHeader.innerHTML = "";
-		colNames.forEach((colName) => {
+		cols.forEach((col) => {
+			const colName = this.#toColumnName(col);
 			const headerDesc = document.createElement("th");
 			headerDesc.innerHTML = `${colName}`;
 			headerDesc.classList.add(colName);
@@ -571,12 +572,13 @@ class SpreadsheetUI {
 			for (let rowno = 0; rowno < rows; rowno++) {
 				const tableRow = document.createElement("tr");
 				this.currentInMemorySpreadsheet.columns.forEach((col, colId) => {
+					const colName = this.#toColumnName(col);
 					const tableCol = document.createElement("td");
 					if (colId !== 0) {
 						const inputContainer = document.createElement("div");
 						inputContainer.className = "container";
 						const input = document.createElement("input");
-						input.className = `${col} input-cell`;
+						input.className = `${colName} input-cell`;
 						input.type = "text";
 						input.name = sheetName;
 						const cellVal = this.currentInMemorySpreadsheet.retrieveCellData(
@@ -585,7 +587,7 @@ class SpreadsheetUI {
 						);
 						input.value = cellVal == null ? "" : cellVal;
 						input.dataset.rowno = rowno;
-						input.dataset.colname = col;
+						input.dataset.colname = colName;
 						input.dataset.isinmemory = false;
 						input.addEventListener("input", async (event) => {
 							event.preventDefault();
@@ -593,12 +595,12 @@ class SpreadsheetUI {
 						});
 						const dropdownList = document.createElement("ul");
 						dropdownList.type = "none";
-						dropdownList.id = `${sheetName}-${col}-dropdown`;
+						dropdownList.id = `${sheetName}-${colName}-dropdown`;
 						dropdownList.className = "dropdown";
 						inputContainer.appendChild(input);
 						inputContainer.appendChild(dropdownList);
 						tableCol.appendChild(inputContainer);
-						tableCol.classList.add(`${col}`);
+						tableCol.classList.add(`${colName}`);
 					} else {
 						tableCol.innerHTML = `${rowno + 1}`;
 						tableCol.classList.add(col);
@@ -629,12 +631,14 @@ class SpreadsheetUI {
 		const mainContainerDiv = document.createElement("div");
 		mainContainerDiv.style.cssText =
 			"margin: 10px 0px; display: flex; flex-direction: row;";
+
 		const rowInputContainerDiv = document.createElement("div");
 		const rowCountInput = document.createElement("input");
 		rowCountInput.type = "number";
 		rowCountInput.id = `${sheetName}-row-input`;
 		rowCountInput.placeholder = "Enter Row Count.";
 		rowInputContainerDiv.appendChild(rowCountInput);
+
 		const insertRowsButton = document.createElement("button");
 		insertRowsButton.textContent = "Insert Empty Rows";
 		insertRowsButton.id = "insertRowsBtn";
@@ -651,6 +655,7 @@ class SpreadsheetUI {
 				this.currentInMemorySpreadsheet.columns
 			);
 		});
+
 		rowInputContainerDiv.appendChild(insertRowsButton);
 		mainContainerDiv.appendChild(rowInputContainerDiv);
 		if (isInMemory) {
@@ -664,6 +669,7 @@ class SpreadsheetUI {
 			});
 			mainContainerDiv.appendChild(saveToDbButton);
 		}
+
 		const saveJsonButton = document.createElement("button");
 		saveJsonButton.textContent = "Save JSON";
 		saveJsonButton.id = "saveJsonBtn";
@@ -673,6 +679,7 @@ class SpreadsheetUI {
 			event.preventDefault();
 			this.saveJson(event);
 		});
+
 		mainContainerDiv.appendChild(saveJsonButton);
 		const loadJsonInput = document.createElement("input");
 		loadJsonInput.type = "file";
@@ -683,6 +690,7 @@ class SpreadsheetUI {
 			event.preventDefault();
 			this.loadJson(event);
 		});
+
 		mainContainerDiv.appendChild(loadJsonInput);
 		const generateDbDumpButton = document.createElement("button");
 		generateDbDumpButton.textContent = "Generate DB dump";
@@ -693,6 +701,7 @@ class SpreadsheetUI {
 			event.preventDefault();
 			this.handleGenerateDBdump(event);
 		});
+
 		mainContainerDiv.appendChild(generateDbDumpButton);
 		restInput.appendChild(mainContainerDiv);
 	}
@@ -807,17 +816,15 @@ class SpreadsheetUI {
 	 * Handles changes in input cells, updating either the in-memory spreadsheet or the database directly.
 	 * @param {Event} event - The input change event.
 	 * @param {number} rowno - The row number (primary key value).
-	 * @param {string} colname - The column name.
+	 * @param {number} colno - The column number (0-based index).
 	 * @param {boolean} isInMemory - True if updating the in-memory AVL spreadsheet.
 	 */
-	async handleInputChange(event, rowno, colname, isInMemory) {
+	async handleInputChange(event, rowno, colno, isInMemory) {
 		const { name: sheetName, value } = event.target;
-		const dropdown = document.getElementById(
-			`${sheetName}-${colname}-dropdown`
-		);
+		const dropdown = document.getElementById(`${sheetName}-${colno}-dropdown`);
 
 		if (isInMemory) {
-			this.currentInMemorySpreadsheet.insertData(rowno, colname, value);
+			this.currentInMemorySpreadsheet.insertData(rowno, colno, value);
 			dropdown.style.display = "none";
 			return;
 		}
@@ -826,7 +833,7 @@ class SpreadsheetUI {
 			const updateInfo = await this.spreadsheetService.getCellUpdateInfo(
 				sheetName,
 				rowno,
-				colname,
+				colno,
 				value
 			);
 			if (updateInfo.type === "foreignKey") {
@@ -1157,9 +1164,9 @@ class SpreadsheetUI {
 			this.currentInMemorySpreadsheet?.columns &&
 			this.currentInMemorySpreadsheet.columns.length > 0
 		) {
-			this.currentInMemorySpreadsheet.columns.forEach((colClass) => {
+			this.currentInMemorySpreadsheet.columns.forEach((col) => {
 				document
-					.querySelectorAll(`.${colClass}`)
+					.querySelectorAll(`.${this.#toColumnName(col)}`)
 					.forEach((el) => el.classList.remove("selected-col"));
 			});
 		}

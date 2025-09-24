@@ -28,31 +28,34 @@ class DatabaseService {
 			// --- FIX: Corrected schema with proper syntax and ON DELETE CASCADE ---
 			this.runSchema(`
                 PRAGMA foreign_keys = ON;
-
-                CREATE TABLE IF NOT EXISTS sheets (
-                    sheet_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    sheet_name TEXT UNIQUE NOT NULL,
+				-- Table: sheets
+				CREATE TABLE IF NOT EXISTS sheets (
+					sheet_id INTEGER PRIMARY KEY AUTOINCREMENT,
+					sheet_name TEXT UNIQUE NOT NULL,
 					max_row INTEGER DEFAULT 0,
 					created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 					updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
+				);
 
-                CREATE TABLE IF NOT EXISTS sheet_columns (
-                    sheet_id INTEGER,
-                    column_name TEXT,
-                    PRIMARY KEY(sheet_id, column_name),
-                    FOREIGN KEY (sheet_id) REFERENCES sheets(sheet_id) ON DELETE CASCADE
-                );
-
-                CREATE TABLE IF NOT EXISTS sheet_data (
-                    sheet_id INTEGER,
-                    col_id TEXT,
-                    row_id TEXT,
-                    cell_value TEXT,
-                    cell_style TEXT,
-                    PRIMARY KEY (sheet_id, col_id, row_id),
-                    FOREIGN KEY (sheet_id) REFERENCES sheets(sheet_id) ON DELETE CASCADE
-                );
+				-- Table: sheet_columns
+				CREATE TABLE IF NOT EXISTS sheet_columns (
+					id INTEGER PRIMARY KEY AUTOINCREMENT, -- Fixed PRIMARY KEY
+					sheet_id INTEGER NOT NULL,
+					column_name TEXT NOT NULL,
+					UNIQUE(sheet_id, column_name), -- Ensures uniqueness for each column per sheet
+					FOREIGN KEY (sheet_id) REFERENCES sheets(sheet_id) ON DELETE CASCADE
+				);
+				-- Table: sheet_data
+				CREATE TABLE IF NOT EXISTS sheet_data (
+					id INTEGER PRIMARY KEY AUTOINCREMENT, -- Fixed PRIMARY KEY
+					sheet_id INTEGER NOT NULL,
+					col_id TEXT NOT NULL,
+					row_id TEXT NOT NULL,
+					cell_value TEXT,
+    				cell_style TEXT,
+    				UNIQUE(sheet_id, col_id, row_id), -- Composite unique constraint
+    				FOREIGN KEY (sheet_id) REFERENCES sheets(sheet_id) ON DELETE CASCADE
+				);
             `);
 			console.log("Database created and initialized with schema.");
 		} catch (error) {
@@ -204,9 +207,8 @@ class DatabaseService {
 	async getSheetColumns(sheetId) {
 		this.#ensureDbInitialized();
 		const result = await this.runQuery(
-			`SELECT column_name FROM sheet_columns WHERE sheet_id = ${sheetId};`
+			`SELECT column_name FROM sheet_columns WHERE sheet_id = ${sheetId} ORDER BY id;`
 		);
-		console.log(result);
 		return result ? result.values : null;
 	}
 
@@ -249,7 +251,6 @@ class DatabaseService {
 		const result = await this.runQuery(
 			`SELECT * FROM sheet_data WHERE sheet_id = ${sheetId} ORDER BY col_id;`
 		);
-		console.log(result);
 		return result ? result.values : null;
 	}
 

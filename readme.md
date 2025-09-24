@@ -63,6 +63,6 @@ readme.md               # This file
 
 - [sql.js](https://github.com/sql-js/sql.js) (bundled as `sql.js`)
 
-## License
+## Author
 
-MIT License
+Shashi Ranjan Kumar

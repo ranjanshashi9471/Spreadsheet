@@ -1,0 +1,274 @@
+body {
+	/* margin: 0px; */
+	padding: 0;
+	font-family: sans-serif;
+}
+
+button {
+	background-color: #3892c2ce; /* Green */
+	color: white;
+	border: none;
+	padding: 10px 20px;
+	text-align: center;
+	text-decoration: none;
+	display: inline-block;
+	font-size: 16px;
+	margin: 4px 2px;
+	cursor: pointer;
+	border-radius: 4px;
+	transition: background-color 0.3s, transform 0.2s;
+}
+
+button:hover {
+	background-color: #28c0c0; /* Darker green on hover */
+}
+
+#user-rows,
+#user-columns,
+.append-rows {
+	border: 1px solid #ccc;
+	border-radius: 4px;
+	padding: 8px;
+	margin: 5px;
+	font-size: 16px;
+}
+
+h2 {
+	text-align: left;
+}
+
+table {
+	width: auto;
+	table-layout: fixed;
+	margin-top: 10px;
+	/*table-layout:auto; 
+	/* width: 100%;*/
+	border-collapse: collapse;
+	/* border: 2px solid black;
+	background-color: #f3f3f3; */
+	border: 2px solid #444;
+	/* background-color: #fafafa;  */
+	font-size: 14px;
+	/* box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);  */
+}
+
+thead {
+	border: 1.5px solid #000;
+	background-color: #e0e0e0;
+	color: #333;
+	font-weight: bold;
+}
+thead tr {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+th,
+td {
+	padding: 5px;
+	text-align: left;
+	border: 1px solid #ccc;
+	white-space: nowrap; /* Prevent text wrapping in cells */
+}
+
+#sidepanel-items {
+	border: 1px #000;
+	padding-top: 2%;
+}
+
+.resize {
+	position: absolute;
+	top: 0;
+	right: 0;
+	width: 5px;
+	height: 100%;
+	cursor: col-resize;
+	background: transparent;
+}
+
+#input-space,
+#rest-all-input {
+	margin: 0px;
+	display: flex;
+	flex-direction: row;
+	justify-content: space-between;
+}
+
+thead tr {
+	position: sticky;
+	z-index: 1;
+}
+
+th {
+	width: 200px;
+	margin: 2% 4% 2%;
+	position: relative;
+	background-color: #f3f3f3;
+	/* width: 100%; */
+	/* white-space: nowrap; */
+}
+
+td {
+	width: 200px;
+	justify-items: center;
+	/* margin: 2% 4% 2%; */
+	/* border: 1px solid black; */
+}
+th:first-child,
+td:first-child {
+	width: 50px;
+	text-align: center;
+	background-color: #f5f5f5;
+	font-weight: bold;
+}
+
+td input {
+	width: 197px;
+	border: transparent;
+}
+
+.hidden {
+	display: none;
+}
+
+.container {
+	position: relative;
+}
+
+.dropdown {
+	padding-left: 0;
+	position: absolute;
+	top: 100%;
+	left: 0;
+	width: 75%;
+	background-color: #fff;
+	border: 1px solid #ccc;
+	border-top: none;
+	border-radius: 0 0 4px 4px;
+	box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+	max-height: 150px;
+	overflow-y: auto;
+	z-index: 10;
+	display: none; /* Hide dropdown initially */
+}
+
+.dropdown li {
+	padding: 5px;
+	cursor: pointer;
+	border-bottom: 1px solid #eee;
+}
+
+.dropdown li:hover {
+	background-color: #f1f1f1;
+}
+
+/* The sidepanel menu */
+.sidepanel {
+	height: 100%; /* Specify a height */
+	width: 0; /* 0 width - change this with JavaScript */
+	position: fixed; /* Stay in place */
+	z-index: 2; /* Stay on top */
+	top: 0;
+	left: 0;
+	background-color: #111; /* Black*/
+	overflow-x: hidden; /* Disable horizontal scroll */
+	padding-top: 60px; /* Place content 60px from the top */
+	transition: 0.5s; /* 0.5 second transition effect to slide in the sidepanel */
+}
+
+/* The sidepanel links */
+.sidepanel a {
+	padding: 8px 8px 8px 32px;
+	text-decoration: none;
+	font-size: 15px;
+	color: #818181;
+	display: block;
+	transition: 0.3s;
+}
+
+/* When you mouse over the navigation links, change their color */
+.sidepanel a:hover {
+	color: #f1f1f1;
+}
+
+/* Position and style the close button (top right corner) */
+.sidepanel .sidepanel-close {
+	position: absolute;
+	top: 0;
+	right: 25px;
+	font-size: 36px;
+	margin-left: 50px;
+}
+
+/* Style the button that is used to open the sidepanel */
+.sidepanel-open {
+	font-size: 20px;
+	cursor: pointer;
+	background-color: #111;
+	color: white;
+	padding: 10px 15px;
+	border: none;
+}
+
+.sidepanel-open:hover {
+	background-color: #444;
+}
+
+#options a {
+	cursor: pointer;
+}
+
+.input-cell {
+	width: 100px;
+	height: 30px;
+}
+
+/* Class to highlight a selected row */
+.selected-row {
+	background-color: #e0e0ff; /* Light blue for selection */
+	outline: 2px solid blue; /* Optional: outline for stronger feedback */
+}
+
+/* Class to highlight a selected column (cells within that column) */
+.selected-col {
+	background-color: #e0ffe0; /* Light green for selection */
+	outline: 2px solid green; /* Optional: outline for stronger feedback */
+}
+
+/* Ensure selected state is visible */
+.selected-row > td,
+.selected-row > th {
+	/* Prevents child background from covering parent highlight if cell has its own color */
+	/* This might need careful handling if individual cells can also have colors */
+}
+
+/* .pagination {
+	display: inline-block;
+	margin-top: 10px;
+	margin-bottom: 10px;
+}
+
+.pagination a {
+	color: black;
+	float: left;
+	padding: 8px 16px;
+	text-decoration: none;
+	transition: background-color 0.3s;
+}
+
+.pagination a:hover,
+#options a {
+	cursor: pointer;
+}
+
+/* Style the active/current link */
+/* .pagination a.active {
+	background-color: dodgerblue;
+	color: white;
+}
+
+.pagination a:hover:not(.active) {
+	background-color: #ddd;
+} */

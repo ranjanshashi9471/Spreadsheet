@@ -26,10 +26,10 @@ class DatabaseService {
 			this.db = new this.SQL.Database();
 
 			// --- FIX: Corrected schema with proper syntax and ON DELETE CASCADE ---
-			this.runSchema(`
+			await this.runSchema(`
                 PRAGMA foreign_keys = ON;
-				-- Table: sheets
-				CREATE TABLE IF NOT EXISTS sheets (
+
+				CREATE TABLE IF NOT EXISTS _sheets (
 					sheet_id INTEGER PRIMARY KEY AUTOINCREMENT,
 					sheet_name TEXT UNIQUE NOT NULL,
 					max_row INTEGER DEFAULT 0,
@@ -37,16 +37,15 @@ class DatabaseService {
 					updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 				);
 
-				-- Table: sheet_columns
-				CREATE TABLE IF NOT EXISTS sheet_columns (
+				CREATE TABLE IF NOT EXISTS _sheet_columns (
 					id INTEGER PRIMARY KEY AUTOINCREMENT, -- Fixed PRIMARY KEY
 					sheet_id INTEGER NOT NULL,
 					column_name TEXT NOT NULL,
 					UNIQUE(sheet_id, column_name), -- Ensures uniqueness for each column per sheet
-					FOREIGN KEY (sheet_id) REFERENCES sheets(sheet_id) ON DELETE CASCADE
+					FOREIGN KEY (sheet_id) REFERENCES _sheets(sheet_id) ON DELETE CASCADE
 				);
-				-- Table: sheet_data
-				CREATE TABLE IF NOT EXISTS sheet_data (
+
+				CREATE TABLE IF NOT EXISTS _sheet_data (
 					id INTEGER PRIMARY KEY AUTOINCREMENT, -- Fixed PRIMARY KEY
 					sheet_id INTEGER NOT NULL,
 					col_id TEXT NOT NULL,
@@ -54,7 +53,7 @@ class DatabaseService {
 					cell_value TEXT,
     				cell_style TEXT,
     				UNIQUE(sheet_id, col_id, row_id), -- Composite unique constraint
-    				FOREIGN KEY (sheet_id) REFERENCES sheets(sheet_id) ON DELETE CASCADE
+    				FOREIGN KEY (sheet_id) REFERENCES _sheets(sheet_id) ON DELETE CASCADE
 				);
             `);
 			console.log("Database created and initialized with schema.");
@@ -113,10 +112,10 @@ class DatabaseService {
 	 * Executes SQL schema content.
 	 * @param {string} schemaSql - The SQL schema content.
 	 */
-	runSchema(schemaSql) {
+	async runSchema(schemaSql) {
 		this.#ensureDbInitialized();
 		try {
-			this.db.run(schemaSql);
+			await this.db.run(schemaSql);
 			console.log("Schema loaded successfully.");
 		} catch (error) {
 			console.error("Error running schema:", error);
@@ -131,7 +130,7 @@ class DatabaseService {
 	 */
 	async findSheetByName(sheetName) {
 		const result = await this.runQuery(
-			`SELECT * FROM sheets WHERE sheet_name = '${sheetName}';`
+			`SELECT * FROM _sheets WHERE sheet_name = '${sheetName}';`
 		);
 		return result ? result.values[0] : null;
 	}
@@ -143,7 +142,7 @@ class DatabaseService {
 	 */
 	async findSheetById(sheetId) {
 		const result = await this.runQuery(
-			`SELECT * FROM sheets WHERE sheet_id = ${sheetId};`
+			`SELECT * FROM _sheets WHERE sheet_id = ${sheetId};`
 		);
 		return result ? result.values[0] : null;
 	}
@@ -157,11 +156,25 @@ class DatabaseService {
 	async addSheet(sheetName, maxRow) {
 		this.#ensureDbInitialized();
 		// --- FIX: Use db.run for INSERT and get lastInsertRowId ---
-		this.db.run(`INSERT INTO sheets (sheet_name, max_row) VALUES (?, ?);`, [
+		this.db.run(`INSERT INTO _sheets (sheet_name, max_row) VALUES (?, ?);`, [
 			sheetName,
 			maxRow,
 		]);
 		return this.db.getRowsModified();
+	}
+
+	/**
+	 * Retrieves a list of all table names in the database.
+	 * @returns {Promise<Array<string>>} A promise that resolves to an array of table names.
+	 */
+	async getSheetNames() {
+		try {
+			const result = await this.runQuery("SELECT sheet_name FROM _sheets;");
+			return result ? result.values.map((row) => row[0]) : [];
+		} catch (error) {
+			console.error("Error retrieving sheet names:", error);
+			throw new Error("Error retrieving sheet names: " + error.message);
+		}
 	}
 
 	/**
@@ -171,7 +184,7 @@ class DatabaseService {
 	 */
 	async setUpdatedAtTimestamp(sheetId) {
 		this.#ensureDbInitialized();
-		const query = `UPDATE sheets SET updated_at = CURRENT_TIMESTAMP WHERE sheet_id = ?;`;
+		const query = `UPDATE _sheets SET updated_at = CURRENT_TIMESTAMP WHERE sheet_id = ?;`;
 		await this.runQuery(query, [sheetId]);
 	}
 
@@ -186,7 +199,7 @@ class DatabaseService {
 		let stmt = null;
 		try {
 			stmt = this.db.prepare(
-				`INSERT INTO sheet_columns (sheet_id, column_name) VALUES (?, ?);`
+				`INSERT INTO _sheet_columns (sheet_id, column_name) VALUES (?, ?);`
 			);
 			for (let colName of columnNames) {
 				stmt.run([sheetId, colName]);
@@ -195,7 +208,11 @@ class DatabaseService {
 		} catch (error) {
 			throw new Error("Error inserting column names: " + error.message);
 		} finally {
-			stmt.free();
+			if (stmt) {
+				stmt.free();
+			} else {
+				console.error("Statement preparation failed, cannot free resources.");
+			}
 		}
 	}
 
@@ -207,7 +224,7 @@ class DatabaseService {
 	async getSheetColumns(sheetId) {
 		this.#ensureDbInitialized();
 		const result = await this.runQuery(
-			`SELECT column_name FROM sheet_columns WHERE sheet_id = ${sheetId} ORDER BY id;`
+			`SELECT column_name FROM _sheet_columns WHERE sheet_id = ${sheetId} ORDER BY id;`
 		);
 		return result ? result.values : null;
 	}
@@ -223,7 +240,7 @@ class DatabaseService {
 		let stmt = null;
 		try {
 			stmt = this.db.prepare(
-				"INSERT INTO sheet_data (sheet_id, col_id, row_id, cell_value, cell_style) VALUES (?, ?, ?, ?, ?);"
+				"INSERT INTO _sheet_data (sheet_id, col_id, row_id, cell_value, cell_style) VALUES (?, ?, ?, ?, ?);"
 			);
 			for (const row of largeDataSet) {
 				stmt.run([
@@ -248,10 +265,9 @@ class DatabaseService {
 	 * @returns {Promise<void>}
 	 */
 	async getSheetData(sheetId) {
-		const result = await this.runQuery(
-			`SELECT * FROM sheet_data WHERE sheet_id = ${sheetId} ORDER BY col_id;`
+		return await this.runQuery(
+			`SELECT * FROM _sheet_data WHERE sheet_id = ${sheetId} ORDER BY col_id;`
 		);
-		return result ? result.values : null;
 	}
 
 	/**
@@ -298,12 +314,30 @@ class DatabaseService {
 	}
 
 	/**
+	 * Retrieves a list of all sheet names in the database.
+	 * @returns {Promise<Array<string>>} A promise that resolves to an array of sheet names.
+	 */
+	async getTableNames() {
+		try {
+			const result = await this.runQuery(
+				"SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('_sheet_columns', '_sheet_data', '_sheets');"
+			);
+			console.log(result);
+			return result ? result.values.map((row) => row[0]) : [];
+		} catch (error) {
+			console.error("Error retrieving table names:", error);
+			throw new Error("Error retrieving table names: " + error.message);
+		}
+	}
+
+	/**
 	 * Retrieves column information using PRAGMA.
 	 * @param {string} tableName - The name of the table.
 	 * @returns {Promise<Array<Array<string>>>} A promise that resolves to the column info.
 	 */
 	async getTableInfo(tableName) {
 		const result = await this.runQuery(`PRAGMA table_info("${tableName}");`);
+		console.log("getTableInfo result:", result);
 		return result ? result.values : [];
 	}
 
@@ -314,15 +348,6 @@ class DatabaseService {
 	 */
 	async selectAllFromTable(tableName) {
 		return await this.runQuery(`SELECT * FROM "${tableName}";`);
-	}
-
-	/**
-	 * Retrieves a list of all table names in the database.
-	 * @returns {Promise<Array<string>>} A promise that resolves to an array of table names.
-	 */
-	async getSheetNames() {
-		const result = await this.runQuery("SELECT sheet_name FROM sheets;");
-		return result ? result.values.map((row) => row[0]) : [];
 	}
 
 	/**

@@ -162,6 +162,9 @@ class Spreadsheet {
 	// Export this class
 	constructor(sheetName = "Sheet1") {
 		this.sheetName = sheetName;
+		this.isInMemory = true;
+		this.primaryKeyList = []; // Kept for syncing with DB if needed
+		this.renderData = null; // Used for UI rendering purposes
 		this.columnTree = new AVLTree();
 		this.columns = [];
 		this.maxRows = 0;

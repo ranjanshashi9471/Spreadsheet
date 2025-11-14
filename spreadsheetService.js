@@ -10,15 +10,20 @@ class BackendService {
 		/**
 		 * @property {object} databaseService - A low-level service for direct database operations.
 		 */
-		this.databaseService = databaseReference;
+		this.databaseService = new DatabaseService();
+		this.databaseService.initialize();
 	}
 
 	/**
 	 * Retrieves the names of all tables (sheets) from the database.
 	 * @returns {Promise<Array<string>>} A promise that resolves to an array of table names.
 	 */
-	async getSheetNames() {
-		return await this.databaseService.getSheetNames();
+	async getSheetNames(isInMemory = true) {
+		if (isInMemory) {
+			return await this.databaseService.getSheetNames();
+		} else {
+			return await this.databaseService.getTableNames();
+		}
 	}
 
 	/**
@@ -172,10 +177,12 @@ class BackendService {
 
 			if (sheetResult == null) {
 				console.log("Table doesn't exists.");
+
 				sheetId = await this.databaseService.addSheet(
 					spreadsheetName,
 					inMemorySpreadsheet.maxRows
 				);
+
 				await this.databaseService.insertColumnNames(
 					sheetId,
 					inMemorySpreadsheet.columns
@@ -218,53 +225,105 @@ class BackendService {
 		}
 	}
 
-	async loadSpreadsheet(spreadsheetName) {
+	async #loadSheetData(spreadsheet) {
+		const sheetResult = await this.databaseService.findSheetByName(
+			spreadsheet.spreadSheetName
+		);
+
+		if (sheetResult == null) {
+			throw new Error("Sheet not found!!");
+		}
+
+		const sheetId = sheetResult[0];
+		spreadsheet.maxRows = sheetResult[2];
+
+		//fetch columns
+		const columnData = await this.databaseService.getSheetColumns(sheetId);
+		if (columnData == null) {
+			throw new Error("No Columns Found");
+		}
+		for (const col of columnData) {
+			spreadsheet.columns.push(col[0] - "0");
+		}
+
+		//fetch data
+		const sheetData = await this.databaseService.getSheetData(sheetId);
+
+		if (sheetData == null) {
+			throw new Error("No Data found!!");
+		}
+		for (const data of sheetData.values) {
+			//data format:
+			// 0: "id", 1: "sheet_id", 2: "col_id", 3: "row_id", 4: "cell_value", 5: "cell_style"
+			spreadsheet.insertData(
+				data[3] - "0",
+				data[2] - "0",
+				data[4],
+				JSON.parse(data[5])
+			);
+		}
+	}
+
+	async #loadTableData(spreadsheet) {
+		const sheetResult = await this.databaseService.getTableNames();
+		const sheetId = sheetResult.find(
+			(s) => s === spreadsheet.spreadSheetName
+		)?.[0];
+
+		if (sheetId == null) {
+			throw new Error("Table not found!!");
+		}
+
+		//incase of db dump and schema select statement gives column and values
+		sheetData = await this.databaseService.selectAllFromTable(tableName);
+		console.log("DUMP", sheetData);
+
+		if (sheetData == null) {
+			throw new Error("No Data Found");
+		}
+
+		spreadsheet.columns = sheetData.columns;
+		spreadsheet.maxRows = sheetData.values.length;
+
+		//format
+		//values: Array of rows
+		//rows: Array of columns
+		// e.g., [[row1col1, row1col2], [row2col1, row2col2], ...]
+		spreadsheet.renderData = sheetData.values;
+
+		//insert data into in-memory structure
+		// sheetData.values.forEach((row, rowId) => {
+		// 	row.forEach((cellValue, colId) => {
+		// 		spreadsheet.insertData(rowId + 1, colId, cellValue, {}); // rowId + 1 to start from 1
+		// 	});
+		// });
+	}
+
+	/**
+	 * Loads a spreadsheet from the database into an in-memory AVL of AVL structure.
+	 * @param {string} spreadsheetName - The name of the sheet (table) to load.
+	 * @param {boolean} isInMemory - True if this is an in-memory spreadsheet, false if DB-backed.
+	 * @returns {Promise<Spreadsheet|null>} A promise that resolves to the loaded Spreadsheet instance or null.
+	 */
+	async loadSpreadsheet(spreadsheetName, isInMemory = true) {
+		const spreadsheet = new Spreadsheet(spreadsheetName);
+		spreadsheet.isInMemory = isInMemory;
+
 		try {
 			if (spreadsheetName == null) {
 				return null;
 			}
-			const spreadsheet = new Spreadsheet(spreadsheetName);
 
-			//check for sheet presence
-			let sheetResult = await this.databaseService.findSheetByName(
-				spreadsheetName
-			);
-			if (sheetResult == null) {
-				throw new Error("Sheet not found!!");
+			if (isInMemory) {
+				await this.#loadSheetData(spreadsheet);
+			} else {
+				await this.#loadTableData(spreadsheet);
 			}
-
-			const sheetId = sheetResult[0];
-			spreadsheet.maxRows = sheetResult[2];
-
-			//fetch columns
-			const columnData = await this.databaseService.getSheetColumns(sheetId);
-			if (columnData == null) {
-				throw new Error("No Columns Found");
-			}
-			for (const col of columnData) {
-				spreadsheet.columns.push(col[0] - "0");
-			}
-
-			//fetch data
-			const sheetData = await this.databaseService.getSheetData(sheetId);
-			if (sheetData == null) {
-				throw new Error("No Data found!!");
-			}
-			for (const data of sheetData) {
-				//data format:
-				// 0: "id", 1: "sheet_id", 2: "col_id", 3: "row_id", 4: "cell_value", 5: "cell_style"
-				spreadsheet.insertData(
-					data[3] - "0",
-					data[2] - "0",
-					data[4],
-					JSON.parse(data[5])
-				);
-			}
-			return spreadsheet;
 		} catch (error) {
 			console.error(error);
-			throw new Error("Error Loading Sheet From DB!!");
+			throw new Error("Error Loading Spreadsheet From DB!!");
 		}
+		return spreadsheet;
 	}
 
 	/**

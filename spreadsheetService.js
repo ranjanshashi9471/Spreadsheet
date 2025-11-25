@@ -27,24 +27,6 @@ class BackendService {
 	}
 
 	/**
-	 * Retrieves all data from a specified table.
-	 * @param {string} sheetName - The name of the sheet (table) to retrieve data from.
-	 * @returns {Promise<object|null>} A promise that resolves to the result object (columns and values) or null.
-	 */
-	async getTableData(sheetName) {
-		return await this.databaseService.selectAllFromTable(sheetName);
-	}
-
-	/**
-	 * Retrieves column information for a specified table.
-	 * @param {string} sheetName - The name of the sheet (table).
-	 * @returns {Promise<Array<Array<string>>>} A promise that resolves to an array of arrays, where each inner array is column info.
-	 */
-	async getTableInfo(sheetName) {
-		return await this.databaseService.getTableInfo(sheetName);
-	}
-
-	/**
 	 * Inserts new rows with empty values into a specified sheet's table.
 	 * @param {string} sheetName - The name of the sheet.
 	 * @param {Array<string>} colList - An array of column names.
@@ -85,18 +67,21 @@ class BackendService {
 	/**
 	 * Retrieves data and foreign key suggestions for a cell based on its current value.
 	 * @param {string} sheetName - The name of the sheet.
-	 * @param {number} rowno - The row number (key) of the cell.
+	 * @param {Array<string>} pKeyList - The list of primary key column names.
+	 * @param {Array<string>} pKeyValues - The list of primary key values corresponding to pKeyList.
 	 * @param {string} colname - The name of the column (key) of the cell.
 	 * @param {string} value - The current value of the cell.
 	 * @returns {Promise<object>} A promise that resolves to an object containing foreign key suggestions or an update query.
 	 */
-	async getCellUpdateInfo(sheetName, rowno, colno, value) {
+	async getCellUpdateInfo(sheetName, pKeyList, pKeyValues, colname, value) {
+		debugger;
 		const foreignKeysResult = await this.databaseService.getForeignKeyList(
 			sheetName
 		);
 		let referringTable = "";
 		let referringColumns = [];
 		foreignKeysResult.forEach((col) => {
+			//structure: [id, seq, referring_table, referring_column, referred_table, referred_column, update_rule, delete_rule, match]
 			if (col[3] === colname) {
 				referringTable = col[2];
 			}
@@ -113,7 +98,9 @@ class BackendService {
 			if (referringColumns.length > 0) {
 				const relatedValuesQuery = `SELECT ${referringColumns
 					.map((c) => `"${c}"`)
-					.join(", ")} FROM "${sheetName}" WHERE c0 = ${rowno}`;
+					.join(", ")} FROM "${sheetName}" WHERE ${pKeyList
+					.map((key, _id) => `${key} = "${pKeyValues[_id]}"`)
+					.join(" AND ")};`;
 				relatedValuesResult = await this.databaseService.runQuery(
 					relatedValuesQuery
 				);
@@ -121,8 +108,8 @@ class BackendService {
 
 			let dropdownQuery = `SELECT DISTINCT("${colname}") FROM "${referringTable}" WHERE`;
 			if (relatedValuesResult && relatedValuesResult.values.length > 0) {
-				relatedValuesResult.columns.forEach((relCol, id) => {
-					const relValue = relatedValuesResult.values[0][id];
+				relatedValuesResult.columns.forEach((relCol, _id) => {
+					const relValue = relatedValuesResult.values[0][_id];
 					if (relValue !== "") {
 						dropdownQuery += ` "${relCol}" = "${relValue}" AND`;
 					}
@@ -134,12 +121,11 @@ class BackendService {
 			return {
 				type: "foreignKey",
 				suggestions: dropdownResult ? dropdownResult.values : [],
-				updateQuery: `UPDATE "${sheetName}" SET "${colname}" = ? WHERE c0 = ${rowno};`,
 			};
 		} else {
 			return {
 				type: "directUpdate",
-				updateQuery: `UPDATE "${sheetName}" SET "${colname}" = "${value}" WHERE c0 = ${rowno};`,
+				suggestions: null,
 			};
 		}
 	}
@@ -226,8 +212,9 @@ class BackendService {
 	}
 
 	async #loadSheetData(spreadsheet) {
+		debugger;
 		const sheetResult = await this.databaseService.findSheetByName(
-			spreadsheet.spreadSheetName
+			spreadsheet.sheetName
 		);
 
 		if (sheetResult == null) {
@@ -266,16 +253,25 @@ class BackendService {
 
 	async #loadTableData(spreadsheet) {
 		const sheetResult = await this.databaseService.getTableNames();
-		const sheetId = sheetResult.find(
-			(s) => s === spreadsheet.spreadSheetName
-		)?.[0];
+		const sheetId = sheetResult.find((s) => s === spreadsheet.sheetName)?.[0];
 
 		if (sheetId == null) {
 			throw new Error("Table not found!!");
 		}
 
+		await this.databaseService
+			.getTableInfo(spreadsheet.sheetName)
+			.forEach((element) => {
+				if (element[5] > 0) {
+					spreadsheet.primaryKeyMap.add(element[0]);
+				}
+			});
+
+		debugger;
 		//incase of db dump and schema select statement gives column and values
-		sheetData = await this.databaseService.selectAllFromTable(tableName);
+		const sheetData = await this.databaseService.selectAllFromTable(
+			spreadsheet.sheetName
+		);
 		console.log("DUMP", sheetData);
 
 		if (sheetData == null) {
@@ -291,12 +287,19 @@ class BackendService {
 		// e.g., [[row1col1, row1col2], [row2col1, row2col2], ...]
 		spreadsheet.renderData = sheetData.values;
 
-		//insert data into in-memory structure
-		// sheetData.values.forEach((row, rowId) => {
-		// 	row.forEach((cellValue, colId) => {
-		// 		spreadsheet.insertData(rowId + 1, colId, cellValue, {}); // rowId + 1 to start from 1
-		// 	});
-		// });
+		// insert data into in-memory structure
+		sheetData.values.forEach((row, rowId) => {
+			row.forEach((cellValue, colId) => {
+				if (spreadsheet.primaryKeys.has(colId)) {
+					if (spreadsheet.primaryKeyMap.has(rowId + 1)) {
+						spreadsheet.primaryKeyMap.get(rowId + 1).push(cellValue);
+					} else {
+						spreadsheet.primaryKeyMap.set(rowId + 1, [cellValue]); // rowId + 1 to start from 1
+					}
+				}
+				spreadsheet.insertData(rowId + 1, colId, cellValue, {}); // rowId + 1 to start from 1
+			});
+		});
 	}
 
 	/**
@@ -306,14 +309,15 @@ class BackendService {
 	 * @returns {Promise<Spreadsheet|null>} A promise that resolves to the loaded Spreadsheet instance or null.
 	 */
 	async loadSpreadsheet(spreadsheetName, isInMemory = true) {
+		debugger;
+		if (spreadsheetName == null) {
+			return null;
+		}
+
 		const spreadsheet = new Spreadsheet(spreadsheetName);
 		spreadsheet.isInMemory = isInMemory;
 
 		try {
-			if (spreadsheetName == null) {
-				return null;
-			}
-
 			if (isInMemory) {
 				await this.#loadSheetData(spreadsheet);
 			} else {

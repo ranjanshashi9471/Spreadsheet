@@ -5,7 +5,13 @@ var SelectionType = {
 	Range: "range",
 };
 
-const ButtonsLabels = {
+var InputType = {
+	Text: "text",
+	File: "file",
+	Number: "number",
+};
+
+var ButtonsLabels = {
 	OK: "OK",
 	Cancel: "Cancel",
 	Yes: "Yes",
@@ -19,5 +25,9 @@ const ButtonsLabels = {
 	SyncChanges: "Sync Changes",
 	ExportJSON: "Export JSON",
 	LoadJSON: "Load JSON",
-	GenerateDump: "Generate Dump",
+	ExportDump: "Export Dump",
+};
+
+var placeholders = {
+	RowCount: "Enter Row Count",
 };

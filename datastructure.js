@@ -163,7 +163,8 @@ class Spreadsheet {
 	constructor(sheetName = "Sheet1") {
 		this.sheetName = sheetName;
 		this.isInMemory = true;
-		this.primaryKeyList = []; // Kept for syncing with DB if needed
+		this.primaryKeys = new Set(); // Kept for syncing with DB if needed
+		this.primaryKeyMap = new Map(); //used to store rowno as key and primarykey values as value
 		this.renderData = null; // Used for UI rendering purposes
 		this.columnTree = new AVLTree();
 		this.columns = [];

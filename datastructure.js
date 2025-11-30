@@ -165,9 +165,8 @@ class Spreadsheet {
 		this.isInMemory = true;
 		this.primaryKeys = new Set(); // Kept for syncing with DB if needed
 		this.primaryKeyMap = new Map(); //used to store rowno as key and primarykey values as value
-		this.renderData = null; // Used for UI rendering purposes
 		this.columnTree = new AVLTree();
-		this.columns = [];
+		this.columns = []; //if dbdump then columnames will be stored here, else columnIds
 		this.maxRows = 0;
 	}
 
@@ -222,6 +221,21 @@ class Spreadsheet {
 	}
 
 	/**
+	 * Retrieves the data from a specific cell.
+	 * @param {*} rowKey - The key identifying the row.
+	 * @param {*} colKey - The key identifying the column.
+	 * @returns {*} The cell value, or null if the cell does not exist.
+	 */
+	retrieveCellStyle(rowKey, colKey) {
+		const colNode = this.columnTree.find(colKey);
+		if (!colNode || !colNode.rows) {
+			return null;
+		}
+		const rowNode = colNode.rows.find(rowKey);
+		return rowNode ? rowNode.style : null;
+	}
+
+	/**
 	 * Traverses all columns and their respective rows, returning a structured representation of the spreadsheet data.
 	 * @returns {Array<object>} An array of objects, each representing a column and its rows.
 	 */
@@ -265,5 +279,10 @@ class Spreadsheet {
 	 */
 	clear() {
 		this.columnTree.root = null;
+		this.columns = [];
+		this.maxRows = 0;
+		this.primaryKeys.clear();
+		this.primaryKeyMap.clear();
+		this.renderData = null;
 	}
 }

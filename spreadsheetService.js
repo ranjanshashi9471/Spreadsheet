@@ -229,15 +229,15 @@ class BackendService {
 		if (columnData == null) {
 			throw new Error("No Columns Found");
 		}
-		for (const col of columnData) {
-			spreadsheet.columns.push(col[0] - "0");
-		}
+
+		spreadsheet.columns = columnData.map((col) => `C${col[0]}`);
 
 		//fetch data
 		const sheetData = await this.databaseService.getSheetData(sheetId);
 
 		if (sheetData == null) {
-			throw new Error("No Data found!!");
+			spreadsheet.maxRows = 0;
+			console.log("No Data found!!", "Executing Load Sheet Data");
 		}
 		for (const data of sheetData.values) {
 			//data format:
@@ -249,6 +249,7 @@ class BackendService {
 				JSON.parse(data[5])
 			);
 		}
+		console.log(spreadsheet);
 	}
 
 	async #loadTableData(spreadsheet) {
@@ -259,15 +260,19 @@ class BackendService {
 			throw new Error("Table not found!!");
 		}
 
-		await this.databaseService
-			.getTableInfo(spreadsheet.sheetName)
-			.forEach((element) => {
+		const tableInfo = await this.databaseService.getTableInfo(
+			spreadsheet.sheetName
+		);
+
+		if (tableInfo != null) {
+			tableInfo.forEach((element) => {
+				spreadsheet.columns.push(element[1]);
 				if (element[5] > 0) {
-					spreadsheet.primaryKeyMap.add(element[0]);
+					spreadsheet.primaryKeys.add(element[0]);
 				}
 			});
+		}
 
-		debugger;
 		//incase of db dump and schema select statement gives column and values
 		const sheetData = await this.databaseService.selectAllFromTable(
 			spreadsheet.sheetName
@@ -275,31 +280,32 @@ class BackendService {
 		console.log("DUMP", sheetData);
 
 		if (sheetData == null) {
-			throw new Error("No Data Found");
-		}
+			spreadsheet.renderData = [];
+			spreadsheet.maxRows = 0;
+		} else {
+			// spreadsheet.columns = sheetData.columns;
+			spreadsheet.maxRows = sheetData.values.length;
 
-		spreadsheet.columns = sheetData.columns;
-		spreadsheet.maxRows = sheetData.values.length;
+			//format
+			//values: Array of rows
+			//rows: Array of columns
+			// e.g., [[row1col1, row1col2], [row2col1, row2col2], ...]
 
-		//format
-		//values: Array of rows
-		//rows: Array of columns
-		// e.g., [[row1col1, row1col2], [row2col1, row2col2], ...]
-		spreadsheet.renderData = sheetData.values;
-
-		// insert data into in-memory structure
-		sheetData.values.forEach((row, rowId) => {
-			row.forEach((cellValue, colId) => {
-				if (spreadsheet.primaryKeys.has(colId)) {
-					if (spreadsheet.primaryKeyMap.has(rowId + 1)) {
-						spreadsheet.primaryKeyMap.get(rowId + 1).push(cellValue);
-					} else {
-						spreadsheet.primaryKeyMap.set(rowId + 1, [cellValue]); // rowId + 1 to start from 1
+			// insert data into in-memory structure
+			sheetData.values.forEach((row, _rowId) => {
+				const rowId = _rowId + 1;
+				row.forEach((cellValue, colId) => {
+					if (spreadsheet.primaryKeys.has(colId)) {
+						if (spreadsheet.primaryKeyMap.has(rowId)) {
+							spreadsheet.primaryKeyMap.get(rowId).push(cellValue);
+						} else {
+							spreadsheet.primaryKeyMap.set(rowId, [cellValue]); // rowId + 1 to start from 1
+						}
 					}
-				}
-				spreadsheet.insertData(rowId + 1, colId, cellValue, {}); // rowId + 1 to start from 1
+					spreadsheet.insertData(rowId, colId, cellValue, {}); // rowId + 1 to start from 1
+				});
 			});
-		});
+		}
 	}
 
 	/**

@@ -194,15 +194,15 @@ class DatabaseService {
 	 * @param {Array<string>} columnNames - The column names to insert.
 	 * @returns {Promise<void>}
 	 */
-	async insertColumnNames(sheetId, columnNames) {
+	async insertColumnNames(sheetId, columnIds) {
 		this.#ensureDbInitialized();
 		let stmt = null;
 		try {
 			stmt = this.db.prepare(
 				`INSERT INTO _sheet_columns (sheet_id, column_name) VALUES (?, ?);`
 			);
-			for (let colName of columnNames) {
-				stmt.run([sheetId, colName]);
+			for (let colId of columnIds) {
+				stmt.run([sheetId, colId]);
 			}
 			console.log("inserted columns into db");
 		} catch (error) {

@@ -67,7 +67,7 @@ class DatabaseService {
 	 * Starts a database transaction.
 	 * @returns {Promise<void>}
 	 */
-	async startTransaction() {
+	async StartTransaction() {
 		this.#ensureDbInitialized();
 		this.db.run("BEGIN TRANSACTION;");
 	}
@@ -76,7 +76,7 @@ class DatabaseService {
 	 * Commits the current database transaction.
 	 * @returns {Promise<void>}
 	 */
-	async commitTransaction() {
+	async CommitTransaction() {
 		this.#ensureDbInitialized();
 		this.db.run("COMMIT;");
 	}
@@ -235,12 +235,12 @@ class DatabaseService {
 	 * @param {Array<object>} largeDataSet - An array of cell data objects.
 	 * @returns {Promise<void>}
 	 */
-	async insertBulkData(sheetId, largeDataSet) {
+	async InsertBulkDataForInMemory(sheetId, largeDataSet) {
 		this.#ensureDbInitialized();
 		let stmt = null;
 		try {
 			stmt = this.db.prepare(
-				"INSERT INTO _sheet_data (sheet_id, col_id, row_id, cell_value, cell_style) VALUES (?, ?, ?, ?, ?);"
+				"INSERT OR REPLACE INTO _sheet_data (sheet_id, col_id, row_id, cell_value, cell_style) VALUES (?, ?, ?, ?, ?);"
 			);
 			for (const row of largeDataSet) {
 				stmt.run([
@@ -310,6 +310,42 @@ class DatabaseService {
 			this.db = null;
 			this.SQL = null;
 			console.log("Database closed.");
+		}
+	}
+
+	/**
+	 * Inserts or replaces bulk data into a specified table.
+	 * @param {string} targetTableName - The name of the target table.
+	 * @param {Array<string>} targetColumns - The list of target column names.
+	 * @param {Array<Array<*>>} dataRows - An array of data rows to insert/replace.
+	 * @returns {Promise<void>}
+	 */
+	async InsertReplaceBulkDataForNotInMemory(
+		targetTableName,
+		targetColumns,
+		dataRows
+	) {
+		console.log(targetColumns, targetTableName, dataRows);
+		let stmt = null;
+		try {
+			// Build the INSERT OR REPLACE query using the raw column names
+			const colNameList = targetColumns.map((col) => `"${col}"`).join(", ");
+			const placeholders = targetColumns.map(() => "?").join(", ");
+
+			stmt = this.db.prepare(
+				`INSERT OR REPLACE INTO "${targetTableName}" (${colNameList}) VALUES (${placeholders});`
+			);
+
+			// Execute bulk run
+			dataRows.forEach((row) => stmt.run(row));
+		} catch (error) {
+			if (stmt) {
+				stmt.free();
+			}
+			console.error("Error inserting/replacing bulk data:", error);
+			throw new Error(
+				`Error inserting/replacing bulk data into table "${targetTableName}": ${error.message}`
+			);
 		}
 	}
 

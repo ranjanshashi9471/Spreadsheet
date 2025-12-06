@@ -272,3 +272,60 @@ td input {
 .pagination a:hover:not(.active) {
 	background-color: #ddd;
 } */
+
+/* CSS */
+.styled-input {
+	font-family: Arial, sans-serif;
+	font-size: 16px;
+	padding: 10px 15px;
+	border-radius: 8px;
+	border: 2px solid #4caf50;
+	background-color: #f9f9f9;
+	color: #333;
+	cursor: pointer;
+	transition: all 0.3s ease;
+	width: 250px;
+}
+
+/* Hover effect */
+.styled-input:hover {
+	border-color: #45a049;
+	background-color: #f1fdf1;
+}
+
+/* Focus effect */
+.styled-input:focus {
+	outline: none;
+	box-shadow: 0 0 5px #4caf50;
+}
+
+/* Customize the file button in Chrome, Edge, Safari */
+.styled-input::-webkit-file-upload-button {
+	background-color: #4caf50;
+	color: white;
+	border: none;
+	padding: 8px 12px;
+	margin-right: 10px;
+	border-radius: 5px;
+	cursor: pointer;
+	transition: background-color 0.3s ease;
+}
+
+.styled-input::-webkit-file-upload-button:hover {
+	background-color: #45a049;
+}
+
+/* Firefox */
+.styled-input::-moz-file-upload-button {
+	background-color: #4caf50;
+	color: white;
+	border: none;
+	padding: 8px 12px;
+	border-radius: 5px;
+	cursor: pointer;
+	transition: background-color 0.3s ease;
+}
+
+.styled-input::-moz-file-upload-button:hover {
+	background-color: #45a049;
+}

@@ -20,7 +20,7 @@ var ButtonsLabels = {
 	InsertEmptyColumn: "Insert Empty Column",
 	DeleteRow: "Delete Row",
 	DeleteColumn: "Delete Column",
-	SaveSheet: "Save Sheet",
+	SaveSyncSheet: "Save / Sync Sheet",
 	LoadSheet: "Load Sheet",
 	SyncChanges: "Sync Changes",
 	ExportJSON: "Export JSON",

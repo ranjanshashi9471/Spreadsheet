@@ -217,22 +217,7 @@ class Spreadsheet {
 			return null;
 		}
 		const rowNode = colNode.rows.find(rowKey);
-		return rowNode ? rowNode.value : null;
-	}
-
-	/**
-	 * Retrieves the data from a specific cell.
-	 * @param {*} rowKey - The key identifying the row.
-	 * @param {*} colKey - The key identifying the column.
-	 * @returns {*} The cell value, or null if the cell does not exist.
-	 */
-	retrieveCellStyle(rowKey, colKey) {
-		const colNode = this.columnTree.find(colKey);
-		if (!colNode || !colNode.rows) {
-			return null;
-		}
-		const rowNode = colNode.rows.find(rowKey);
-		return rowNode ? rowNode.style : null;
+		return rowNode ? { value: rowNode.value, style: rowNode.style } : null;
 	}
 
 	/**

@@ -416,7 +416,7 @@ class SpreadsheetUI {
 			// 1. Render Row Header (c0 / ID column)
 			const tdId = document.createElement("td");
 			tdId.innerHTML = `${rowno}`;
-			tdId.classList.add("c0");
+			tdId.classList.add("C0");
 			// Store metadata for selection logic
 			tdId.dataset.rowKey = rowno;
 			tdId.addEventListener("click", (e) => this.selectRow(rowno, e));
@@ -424,25 +424,23 @@ class SpreadsheetUI {
 
 			// 2. Render Data Columns
 			cols.forEach((colName, colKey) => {
-				const td = document.createElement("td");
+				colName = isInMemory ? this.#toColumnName(colKey + 1) : colName;
 
+				const td = document.createElement("td");
 				const inputContainer = document.createElement("div");
 				inputContainer.className = "container";
 
 				const input = document.createElement("input");
 				input.type = "text";
-				input.className = `${colName} input-cell`;
+				input.className = `${colName}-input-cell`;
 				input.name = sheetName;
 
-				// RETRIEVE DATA: Get value from the data structure
+				// RETRIEVE DATA: Get value,style from the data structure
 				const cellVal = this.currentSpreadsheet.retrieveCellData(rowno, colKey);
-				input.value = cellVal == null ? "" : cellVal;
+				input.value = cellVal == null ? "" : cellVal.value;
 
 				// RETRIEVE STYLE: Get style from the data structure
-				const cellStyle = this.currentSpreadsheet.retrieveCellStyle(
-					rowno,
-					colKey
-				);
+				const cellStyle = cellVal == null ? null : cellVal.style;
 				if (cellStyle && typeof cellStyle === "object") {
 					// Apply saved styles (e.g., background color) to the TD
 					Object.assign(td.style, cellStyle);
@@ -462,7 +460,7 @@ class SpreadsheetUI {
 				const ul = document.createElement("ul");
 				ul.type = "none";
 				ul.className = "dropdown";
-				ul.id = `${sheetName}-${colKey}-dropdown`;
+				ul.id = `${sheetName}-${rowno}-${colKey}-dropdown`;
 
 				inputContainer.appendChild(input);
 				inputContainer.appendChild(ul);
@@ -489,8 +487,8 @@ class SpreadsheetUI {
 		const rowCountInput = document.getElementById("user-rows");
 		const colCountInput = document.getElementById("user-columns");
 
-		const rows = 55; //parseInt(rowCountInput.value, 10);
-		const columns = 55; //parseInt(colCountInput.value, 10);
+		const rows = parseInt(rowCountInput.value, 10);
+		const columns = parseInt(colCountInput.value, 10);
 
 		if (isNaN(rows) || rows <= 0 || isNaN(columns) || columns <= 0) {
 			alert("Please enter valid positive numbers.");
@@ -665,6 +663,7 @@ class SpreadsheetUI {
 		const rowCountInput = document.createElement("input");
 		rowCountInput.type = InputType.Number;
 		rowCountInput.id = `${sheetName}-row-input`;
+		rowCountInput.classList.add("styled-input");
 		rowCountInput.placeholder = placeholders.RowCount;
 		rowInputContainerDiv.appendChild(rowCountInput);
 
@@ -680,20 +679,18 @@ class SpreadsheetUI {
 			const btn = event.currentTarget;
 			this.insertRows(event);
 		});
-
 		rowInputContainerDiv.appendChild(insertRowsButton);
 		mainContainerDiv.appendChild(rowInputContainerDiv);
-		if (isInMemory) {
-			const saveToDbButton = document.createElement("button");
-			saveToDbButton.textContent = ButtonsLabels.SaveSheet;
-			saveToDbButton.id = "saveToDbBtn";
-			saveToDbButton.style.marginLeft = "10px";
-			saveToDbButton.addEventListener("click", (event) => {
-				event.preventDefault();
-				this.saveInMemorySpreadsheetToDb(event);
-			});
-			mainContainerDiv.appendChild(saveToDbButton);
-		}
+
+		const saveToDbButton = document.createElement("button");
+		saveToDbButton.textContent = ButtonsLabels.SaveSyncSheet;
+		saveToDbButton.id = "saveBtn";
+		saveToDbButton.style.marginLeft = "10px";
+		saveToDbButton.addEventListener("click", (event) => {
+			event.preventDefault();
+			this.saveSpreadsheetToDb(event);
+		});
+		mainContainerDiv.appendChild(saveToDbButton);
 
 		const exportJsonButton = document.createElement("button");
 		exportJsonButton.textContent = ButtonsLabels.ExportJSON;
@@ -710,6 +707,7 @@ class SpreadsheetUI {
 		const loadJsonInput = document.createElement("input");
 		loadJsonInput.type = InputType.File;
 		loadJsonInput.id = "loadJsonFileInput";
+		loadJsonInput.classList.add("styled-input");
 		loadJsonInput.style.marginLeft = "10px";
 		loadJsonInput.dataset.sheetName = sheetName;
 		loadJsonInput.addEventListener("change", (event) => {
@@ -834,7 +832,9 @@ class SpreadsheetUI {
 	async handleInputChange(event, rowno, colno, isInMemory) {
 		event.preventDefault();
 		const { name: sheetName, value } = event.target;
-		const dropdown = document.getElementById(`${sheetName}-${colno}-dropdown`);
+		const dropdown = document.getElementById(
+			`${sheetName}-${rowno}-${colno}-dropdown`
+		);
 
 		if (isInMemory) {
 			this.currentSpreadsheet.insertData(rowno, colno, value);
@@ -901,27 +901,29 @@ class SpreadsheetUI {
 	 * Saves the current in-memory spreadsheet (AVL of AVL) to the database.
 	 * This will create a new table in the DB and populate it.
 	 */
-	async saveInMemorySpreadsheetToDb(event) {
-		event.preventDefault();
+	async saveSpreadsheetToDb(event) {
+		debugger;
 		if (!this.currentSpreadsheet) {
 			alert("No in-memory spreadsheet to save.");
 			return;
 		}
-		const newDbSheetName = `saved_sheet_${Math.floor(Math.random() * 100000)}`;
 		try {
-			this.currentSpreadsheet.columns = this.currentSpreadsheet.columns.map(
-				(col) => this.#toColumnIndex(col)
-			);
+			if (this.currentSpreadsheet.isInMemory) {
+				this.currentSpreadsheet.columns = this.currentSpreadsheet.columns.map(
+					(col) => this.#toColumnIndex(col)
+				);
+			}
 
-			await this.spreadsheetService.saveInMemorySpreadsheet(
-				newDbSheetName,
+			await this.spreadsheetService.SaveSpreadsheetChanges(
 				this.currentSpreadsheet
 			);
+
 			alert(
-				`Spreadsheet '${this.currentSpreadsheet.sheetName}' successfully saved to database as '${newDbSheetName}'.`
+				`Spreadsheet '${this.currentSpreadsheet.sheetName}' successfully saved to database.`
 			);
-			this.currentSpreadsheet = null;
-			await this.renderSheetsNames(event, true);
+
+			this.currentSpreadsheet.clear();
+			await this.renderSheetsNames(event, this.currentSpreadsheet.isInMemory);
 		} catch (error) {
 			console.error("Error saving in-memory spreadsheet to DB:", error);
 			alert(`Error saving spreadsheet to database: ${error.message}`);

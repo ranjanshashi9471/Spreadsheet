@@ -1,3 +1,4 @@
+// spreadsheetService.js
 class BackendService {
 	/**
 	 * @classdesc A service layer that encapsulates all business logic and database interactions
@@ -10,33 +11,20 @@ class BackendService {
 		/**
 		 * @property {object} databaseService - A low-level service for direct database operations.
 		 */
-		this.databaseService = databaseReference;
+		this.databaseService = new DatabaseService();
+		this.databaseService.initialize();
 	}
 
 	/**
 	 * Retrieves the names of all tables (sheets) from the database.
 	 * @returns {Promise<Array<string>>} A promise that resolves to an array of table names.
 	 */
-	async getSheetNames() {
-		return await this.databaseService.getSheetNames();
-	}
-
-	/**
-	 * Retrieves all data from a specified table.
-	 * @param {string} sheetName - The name of the sheet (table) to retrieve data from.
-	 * @returns {Promise<object|null>} A promise that resolves to the result object (columns and values) or null.
-	 */
-	async getTableData(sheetName) {
-		return await this.databaseService.selectAllFromTable(sheetName);
-	}
-
-	/**
-	 * Retrieves column information for a specified table.
-	 * @param {string} sheetName - The name of the sheet (table).
-	 * @returns {Promise<Array<Array<string>>>} A promise that resolves to an array of arrays, where each inner array is column info.
-	 */
-	async getTableInfo(sheetName) {
-		return await this.databaseService.getTableInfo(sheetName);
+	async getSheetNames(isInMemory = true) {
+		if (isInMemory) {
+			return await this.databaseService.getSheetNames();
+		} else {
+			return await this.databaseService.getTableNames();
+		}
 	}
 
 	/**
@@ -80,18 +68,20 @@ class BackendService {
 	/**
 	 * Retrieves data and foreign key suggestions for a cell based on its current value.
 	 * @param {string} sheetName - The name of the sheet.
-	 * @param {number} rowno - The row number (key) of the cell.
+	 * @param {Array<string>} pKeyList - The list of primary key column names.
+	 * @param {Array<string>} pKeyValues - The list of primary key values corresponding to pKeyList.
 	 * @param {string} colname - The name of the column (key) of the cell.
 	 * @param {string} value - The current value of the cell.
 	 * @returns {Promise<object>} A promise that resolves to an object containing foreign key suggestions or an update query.
 	 */
-	async getCellUpdateInfo(sheetName, rowno, colno, value) {
+	async getCellUpdateInfo(sheetName, pKeyList, pKeyValues, colname, value) {
 		const foreignKeysResult = await this.databaseService.getForeignKeyList(
 			sheetName
 		);
 		let referringTable = "";
 		let referringColumns = [];
 		foreignKeysResult.forEach((col) => {
+			//structure: [id, seq, referring_table, referring_column, referred_table, referred_column, update_rule, delete_rule, match]
 			if (col[3] === colname) {
 				referringTable = col[2];
 			}
@@ -108,7 +98,9 @@ class BackendService {
 			if (referringColumns.length > 0) {
 				const relatedValuesQuery = `SELECT ${referringColumns
 					.map((c) => `"${c}"`)
-					.join(", ")} FROM "${sheetName}" WHERE c0 = ${rowno}`;
+					.join(", ")} FROM "${sheetName}" WHERE ${pKeyList
+					.map((key, _id) => `${key} = "${pKeyValues[_id]}"`)
+					.join(" AND ")};`;
 				relatedValuesResult = await this.databaseService.runQuery(
 					relatedValuesQuery
 				);
@@ -116,8 +108,8 @@ class BackendService {
 
 			let dropdownQuery = `SELECT DISTINCT("${colname}") FROM "${referringTable}" WHERE`;
 			if (relatedValuesResult && relatedValuesResult.values.length > 0) {
-				relatedValuesResult.columns.forEach((relCol, id) => {
-					const relValue = relatedValuesResult.values[0][id];
+				relatedValuesResult.columns.forEach((relCol, _id) => {
+					const relValue = relatedValuesResult.values[0][_id];
 					if (relValue !== "") {
 						dropdownQuery += ` "${relCol}" = "${relValue}" AND`;
 					}
@@ -129,12 +121,11 @@ class BackendService {
 			return {
 				type: "foreignKey",
 				suggestions: dropdownResult ? dropdownResult.values : [],
-				updateQuery: `UPDATE "${sheetName}" SET "${colname}" = ? WHERE c0 = ${rowno};`,
 			};
 		} else {
 			return {
 				type: "directUpdate",
-				updateQuery: `UPDATE "${sheetName}" SET "${colname}" = "${value}" WHERE c0 = ${rowno};`,
+				suggestions: null,
 			};
 		}
 	}
@@ -149,15 +140,89 @@ class BackendService {
 		await this.databaseService.runQuery(query, params);
 	}
 
+	//#region Helpers
+
+	#ConvertTreeToDataArray(columnTree) {
+		const largeDataSet = [];
+
+		const inMemoryColumns = columnTree._traverseInOrder(columnTree.root);
+
+		for (const col of inMemoryColumns) {
+			const inMemoryRows = col.rows
+				? col.rows._traverseInOrder(col.rows.root)
+				: [];
+
+			for (const row of inMemoryRows) {
+				const sheetDataRow = {
+					col_id: col.key,
+					row_id: row.key,
+					cell_value: row.value,
+					cell_style: JSON.stringify(row.style), // Assuming style is a property on RowNode
+				};
+				largeDataSet.push(sheetDataRow);
+			}
+		}
+		return largeDataSet;
+	}
+
+	/**
+	 * Iterates through the entire AVL tree to collect all unique row IDs
+	 * that currently exist (meaning they contain modified data or styles).
+	 * @param {Spreadsheet} spreadsheet
+	 * @returns {Set<number|string>} Set of all modified row keys.
+	 */
+	#getAllModifiedRowKeys(columnTree) {
+		const modifiedRowKeys = new Set();
+		const allColumns = columnTree._traverseInOrder(columnTree.root);
+
+		for (const colNode of allColumns) {
+			if (colNode.rows) {
+				// Traverse the inner row tree for this column
+				const inMemoryRows = colNode.rows._traverseInOrder(colNode.rows.root);
+				for (const rowNode of inMemoryRows) {
+					modifiedRowKeys.add(rowNode.key); // Add the unique row ID to the Set
+				}
+			}
+		}
+		return modifiedRowKeys;
+	}
+
+	//#endregion
+
+	/**
+	 * Saves the current sparse in-memory data to the appropriate persistence layer.
+	 * This acts as the master save router.
+	 * @param {Spreadsheet} inMemorySpreadsheet - The AVL of AVL instance.
+	 * @returns {Promise<void>}
+	 */
+	async SaveSpreadsheetChanges(inMemorySpreadsheet) {
+		try {
+			if (
+				!inMemorySpreadsheet ||
+				inMemorySpreadsheet.columnTree.root === null
+			) {
+				throw new Error("No data changes to save.");
+			}
+
+			if (inMemorySpreadsheet.isInMemory) {
+				await this.#SaveInMemorySpreadsheet(inMemorySpreadsheet);
+			} else {
+				await this.#SyncNotInMemorySpreadsheet(inMemorySpreadsheet);
+			}
+		} catch (error) {
+			console.error("Error saving spreadsheet changes:", error);
+			throw error; // Re-throw to allow the calling UI function to handle it
+		}
+	}
+
 	/**
 	 * Creates a new table for a new in-memory spreadsheet and populates it with data.
-	 * @param {string} spreadsheetName - The name for the new database sheet.
 	 * @param {Spreadsheet} inMemorySpreadsheet - The in-memory AVL of AVL instance.
 	 * @returns {Promise<void>} A promise that resolves when the save operation is complete.
 	 */
-	async saveInMemorySpreadsheet(spreadsheetName, inMemorySpreadsheet) {
+	async #SaveInMemorySpreadsheet(inMemorySpreadsheet) {
 		let sheetId = null;
-		const largeDataSet = [];
+		const spreadsheetName = inMemorySpreadsheet.sheetName;
 
 		try {
 			if (inMemorySpreadsheet.columnTree.root === null) {
@@ -167,104 +232,233 @@ class BackendService {
 			let sheetResult = await this.databaseService.findSheetByName(
 				spreadsheetName
 			);
-			// Start a transaction
-			await this.databaseService.startTransaction();
 
-			if (sheetResult == null) {
-				console.log("Table doesn't exists.");
-				sheetId = await this.databaseService.addSheet(
-					spreadsheetName,
-					inMemorySpreadsheet.maxRows
-				);
-				await this.databaseService.insertColumnNames(
-					sheetId,
-					inMemorySpreadsheet.columns
-				);
-			} else {
-				sheetId = sheetResult[0];
-				await this.databaseService.setUpdatedAtTimestamp(sheetId);
-				console.log("Using existing table with ID:", sheetId);
-			}
+			try {
+				// Start a transaction
+				await this.databaseService.StartTransaction();
 
-			const inMemoryColumns = inMemorySpreadsheet.columnTree._traverseInOrder(
-				inMemorySpreadsheet.columnTree.root
-			);
+				if (sheetResult == null) {
+					console.log("Table doesn't exists.");
 
-			for (const col of inMemoryColumns) {
-				const inMemoryRows = col.rows
-					? col.rows._traverseInOrder(col.rows.root)
-					: [];
+					sheetId = await this.databaseService.addSheet(
+						spreadsheetName,
+						inMemorySpreadsheet.maxRows
+					);
 
-				for (const row of inMemoryRows) {
-					const sheetDataRow = {
-						col_id: col.key,
-						row_id: row.key,
-						cell_value: row.value,
-						cell_style: JSON.stringify(row.style), // Assuming style is a property on RowNode
-					};
-					largeDataSet.push(sheetDataRow);
+					await this.databaseService.insertColumnNames(
+						sheetId,
+						inMemorySpreadsheet.columns
+					);
+				} else {
+					sheetId = sheetResult[0];
+					await this.databaseService.setUpdatedAtTimestamp(sheetId);
+					console.log("Using existing table with ID:", sheetId);
 				}
+
+				const largeDataSet = this.#ConvertTreeToDataArray(
+					inMemorySpreadsheet.columnTree
+				);
+
+				// Await the bulk insert call
+				await this.databaseService.InsertBulkDataForInMemory(
+					sheetId,
+					largeDataSet
+				);
+				await this.databaseService.CommitTransaction();
+
+				console.log(`Successfully saved in-memory spreadsheet to DB.`);
+			} catch (error) {
+				await this.databaseService.rollbackTransaction();
+				console.error("Error saving in-memory spreadsheet:", error);
+				throw error; // Re-throw to allow the calling UI function to handle it
 			}
-
-			// Await the bulk insert call
-			await this.databaseService.insertBulkData(sheetId, largeDataSet);
-			await this.databaseService.commitTransaction();
-
-			console.log(`Successfully saved in-memory spreadsheet to DB.`);
 		} catch (error) {
-			await this.databaseService.rollbackTransaction();
 			console.error("Error saving in-memory spreadsheet:", error);
 			throw error; // Re-throw to allow the calling UI function to handle it
 		}
 	}
 
-	async loadSpreadsheet(spreadsheetName) {
+	/**
+	 * Syncs changes from a non-in-memory spreadsheet back to its database table.
+	 * @param {Spreadsheet} spreadsheet - The non-in-memory AVL of AVL instance.
+	 * @returns {Promise<void>}
+	 */
+	async #SyncNotInMemorySpreadsheet(spreadsheet) {
+		debugger;
+		// Implementation for syncing changes to the database
 		try {
-			if (spreadsheetName == null) {
-				return null;
-			}
-			const spreadsheet = new Spreadsheet(spreadsheetName);
-
-			//check for sheet presence
-			let sheetResult = await this.databaseService.findSheetByName(
-				spreadsheetName
+			// 1. Identify all unique row keys that have been modified in the sparse tree.
+			const allModifiedRowKeys = this.#getAllModifiedRowKeys(
+				spreadsheet.columnTree
 			);
-			if (sheetResult == null) {
-				throw new Error("Sheet not found!!");
+
+			// 2. Extract Data Rows for Saving
+			const dataRows = [];
+			const targetColumns = spreadsheet.columns; // Raw column names from the external table
+
+			// Iterate over the SET of identified modified Row IDs
+			for (const rowId of allModifiedRowKeys) {
+				const rowValues = [];
+
+				// Collect all column data for the SQL INSERT/REPLACE statement
+				// We must iterate over TARGET_COLUMNS to get the values in the correct SQL order
+				targetColumns.forEach((colName, colKey) => {
+					// Retrieve the latest value from the AVL tree's abstraction.
+					// This handles cases where the tree is sparse (returns null/'' for non-edited cells).
+					// Since we are inserting into a raw table, we ignore the cell_style property for now.
+					const value =
+						spreadsheet.retrieveCellData(rowId, colKey)?.value || "";
+
+					rowValues.push(value);
+				});
+
+				// Add the fully collected row array to the bulk insert batch
+				dataRows.push(rowValues);
 			}
 
-			const sheetId = sheetResult[0];
-			spreadsheet.maxRows = sheetResult[2];
+			// Mode 2: External Schema (Saving back to the raw user table)
+			await this.databaseService.StartTransaction();
 
-			//fetch columns
-			const columnData = await this.databaseService.getSheetColumns(sheetId);
-			if (columnData == null) {
-				throw new Error("No Columns Found");
-			}
-			for (const col of columnData) {
-				spreadsheet.columns.push(col[0] - "0");
-			}
+			await this.databaseService.InsertReplaceBulkDataForNotInMemory(
+				spreadsheet.sheetName,
+				targetColumns,
+				dataRows
+			);
 
-			//fetch data
-			const sheetData = await this.databaseService.getSheetData(sheetId);
-			if (sheetData == null) {
-				throw new Error("No Data found!!");
+			await this.databaseService.CommitTransaction();
+
+			console.log(
+				`Successfully saved ${dataRows.length} rows to external table: ${spreadsheet.sheetName}`
+			);
+		} catch (error) {
+			await this.databaseService.rollbackTransaction();
+			throw new Error(
+				`Failed to save changes to external table "${targetTableName}": ${error.message}`
+			);
+		}
+	}
+
+	async #loadSheetData(spreadsheet) {
+		const sheetResult = await this.databaseService.findSheetByName(
+			spreadsheet.sheetName
+		);
+
+		if (sheetResult == null) {
+			throw new Error("Sheet not found!!");
+		}
+
+		const sheetId = sheetResult[0];
+		spreadsheet.maxRows = sheetResult[2];
+
+		//fetch columns
+		const columnData = await this.databaseService.getSheetColumns(sheetId);
+		if (columnData == null) {
+			throw new Error("No Columns Found");
+		}
+
+		spreadsheet.columns = columnData.map((col) => `C${col[0]}`);
+
+		//fetch data
+		const sheetData = await this.databaseService.getSheetData(sheetId);
+
+		if (sheetData == null) {
+			spreadsheet.maxRows = 1;
+			console.log("No Data found!!", "Executing Load Sheet Data");
+		}
+		for (const data of sheetData.values) {
+			//data format:
+			// 0: "id", 1: "sheet_id", 2: "col_id", 3: "row_id", 4: "cell_value", 5: "cell_style"
+			spreadsheet.insertData(
+				data[3] - "0",
+				data[2] - "0",
+				data[4],
+				JSON.parse(data[5])
+			);
+		}
+		console.log(spreadsheet);
+	}
+
+	async #loadTableData(spreadsheet) {
+		const sheetResult = await this.databaseService.getTableNames();
+		const sheetId = sheetResult.find((s) => s === spreadsheet.sheetName)?.[0];
+
+		if (sheetId == null) {
+			throw new Error("Table not found!!");
+		}
+
+		const tableInfo = await this.databaseService.getTableInfo(
+			spreadsheet.sheetName
+		);
+
+		if (tableInfo != null) {
+			tableInfo.forEach((element) => {
+				spreadsheet.columns.push(element[1]);
+				if (element[5] > 0) {
+					spreadsheet.primaryKeys.add(element[0]);
+				}
+			});
+		}
+
+		//incase of db dump and schema select statement gives column and values
+		const sheetData = await this.databaseService.selectAllFromTable(
+			spreadsheet.sheetName
+		);
+		console.log("DUMP", sheetData);
+
+		if (sheetData == null) {
+			spreadsheet.renderData = [];
+			spreadsheet.maxRows = 1;
+		} else {
+			// spreadsheet.columns = sheetData.columns;
+			spreadsheet.maxRows = sheetData.values.length;
+
+			//format
+			//values: Array of rows
+			//rows: Array of columns
+			// e.g., [[row1col1, row1col2], [row2col1, row2col2], ...]
+
+			// insert data into in-memory structure
+			sheetData.values.forEach((row, _rowId) => {
+				const rowId = _rowId + 1;
+				row.forEach((cellValue, colId) => {
+					if (spreadsheet.primaryKeys.has(colId)) {
+						if (spreadsheet.primaryKeyMap.has(rowId)) {
+							spreadsheet.primaryKeyMap.get(rowId).push(cellValue);
+						} else {
+							spreadsheet.primaryKeyMap.set(rowId, [cellValue]); // rowId + 1 to start from 1
+						}
+					}
+					spreadsheet.insertData(rowId, colId, cellValue, {}); // rowId + 1 to start from 1
+				});
+			});
+		}
+	}
+
+	/**
+	 * Loads a spreadsheet from the database into an in-memory AVL of AVL structure.
+	 * @param {string} spreadsheetName - The name of the sheet (table) to load.
+	 * @param {boolean} isInMemory - True if this is an in-memory spreadsheet, false if DB-backed.
+	 * @returns {Promise<Spreadsheet|null>} A promise that resolves to the loaded Spreadsheet instance or null.
+	 */
+	async loadSpreadsheet(spreadsheetName, isInMemory = true) {
+		if (spreadsheetName == null) {
+			return null;
+		}
+
+		const spreadsheet = new Spreadsheet(spreadsheetName);
+		spreadsheet.isInMemory = isInMemory;
+
+		try {
+			if (isInMemory) {
+				await this.#loadSheetData(spreadsheet);
+			} else {
+				await this.#loadTableData(spreadsheet);
 			}
-			for (const data of sheetData) {
-				//data format:
-				// 0: "id", 1: "sheet_id", 2: "col_id", 3: "row_id", 4: "cell_value", 5: "cell_style"
-				spreadsheet.insertData(
-					data[3] - "0",
-					data[2] - "0",
-					data[4],
-					JSON.parse(data[5])
-				);
-			}
-			return spreadsheet;
 		} catch (error) {
 			console.error(error);
-			throw new Error("Error Loading Sheet From DB!!");
+			throw new Error("Error Loading Spreadsheet From DB!!");
 		}
+		return spreadsheet;
 	}
 
 	/**

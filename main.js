@@ -2,12 +2,7 @@
 
 async function initializeApp() {
 	try {
-		const databaseService = new DatabaseService();
-		await databaseService.initialize();
-
-		const backEndService = new BackendService(databaseService);
-
-		const spreadsheetUI = new SpreadsheetUI("root", backEndService);
+		const spreadsheetUI = new SpreadsheetUI("root");
 		spreadsheetUI.initializeUI();
 
 		console.log("Application initialized successfully.");

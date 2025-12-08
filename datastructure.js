@@ -162,12 +162,13 @@ class Spreadsheet {
 	// Export this class
 	constructor(sheetName = "Sheet1") {
 		this.sheetName = sheetName;
+		this.sheetId = 0;
 		this.isInMemory = true;
+		this.columns = []; //if dbdump then columnames will be stored here, else columnIds
+		this.maxRows = 0;
 		this.primaryKeys = new Set(); // Kept for syncing with DB if needed
 		this.primaryKeyMap = new Map(); //used to store rowno as key and primarykey values as value
 		this.columnTree = new AVLTree();
-		this.columns = []; //if dbdump then columnames will be stored here, else columnIds
-		this.maxRows = 0;
 	}
 
 	/**

@@ -187,6 +187,43 @@ class BackendService {
 		return modifiedRowKeys;
 	}
 
+	/**
+	 * Constructs a 2D array of data rows from the sparse AVL tree structure,
+	 * suitable for bulk insertion into the database.
+	 * @param {Spreadsheet.columnTree} columnTree
+	 * @param {Array<string>} targetColumns - The list of target column names.
+	 * @returns {Array<Array<*>>} 2D array of data rows.
+	 */
+	#GetDataArrayFromSparseTree(spreadsheet) {
+		const { columnTree, columns: targetColumns, isInMemory } = spreadsheet;
+
+		// 1. Identify all unique row keys that have been modified in the sparse tree.
+		const allModifiedRowKeys = this.#getAllModifiedRowKeys(columnTree);
+
+		const dataRows = [];
+
+		// Iterate over the SET of identified modified Row IDs
+		for (const rowId of allModifiedRowKeys) {
+			const rowValues = [];
+
+			targetColumns.forEach((colName, colKey) => {
+				const value = spreadsheet.retrieveCellData(rowId, colKey)?.value || "";
+				// const styles = spreadsheet.retrieveCellData(rowId, colKey)?.style || {};
+
+				// Push value and style (as JSON string) into the row array
+				rowValues.push(value);
+
+				// if (isInMemory && Object.keys(styles).length !== 0) {
+				// 	rowValues.push(JSON.stringify(styles));
+				// }
+			});
+
+			// Add the fully collected row array to the bulk insert batch
+			dataRows.push(rowValues);
+		}
+		return dataRows;
+	}
+
 	//#endregion
 
 	/**
@@ -284,37 +321,11 @@ class BackendService {
 	 * @returns {Promise<void>}
 	 */
 	async #SyncNotInMemorySpreadsheet(spreadsheet) {
-		debugger;
 		// Implementation for syncing changes to the database
 		try {
-			// 1. Identify all unique row keys that have been modified in the sparse tree.
-			const allModifiedRowKeys = this.#getAllModifiedRowKeys(
-				spreadsheet.columnTree
-			);
-
-			// 2. Extract Data Rows for Saving
-			const dataRows = [];
 			const targetColumns = spreadsheet.columns; // Raw column names from the external table
 
-			// Iterate over the SET of identified modified Row IDs
-			for (const rowId of allModifiedRowKeys) {
-				const rowValues = [];
-
-				// Collect all column data for the SQL INSERT/REPLACE statement
-				// We must iterate over TARGET_COLUMNS to get the values in the correct SQL order
-				targetColumns.forEach((colName, colKey) => {
-					// Retrieve the latest value from the AVL tree's abstraction.
-					// This handles cases where the tree is sparse (returns null/'' for non-edited cells).
-					// Since we are inserting into a raw table, we ignore the cell_style property for now.
-					const value =
-						spreadsheet.retrieveCellData(rowId, colKey)?.value || "";
-
-					rowValues.push(value);
-				});
-
-				// Add the fully collected row array to the bulk insert batch
-				dataRows.push(rowValues);
-			}
+			const dataRows = this.#GetDataArrayFromSparseTree(spreadsheet);
 
 			// Mode 2: External Schema (Saving back to the raw user table)
 			await this.databaseService.StartTransaction();
@@ -349,6 +360,7 @@ class BackendService {
 
 		const sheetId = sheetResult[0];
 		spreadsheet.maxRows = sheetResult[2];
+		spreadsheet.sheetId = sheetId;
 
 		//fetch columns
 		const columnData = await this.databaseService.getSheetColumns(sheetId);
@@ -365,6 +377,7 @@ class BackendService {
 			spreadsheet.maxRows = 1;
 			console.log("No Data found!!", "Executing Load Sheet Data");
 		}
+
 		for (const data of sheetData.values) {
 			//data format:
 			// 0: "id", 1: "sheet_id", 2: "col_id", 3: "row_id", 4: "cell_value", 5: "cell_style"
@@ -375,6 +388,7 @@ class BackendService {
 				JSON.parse(data[5])
 			);
 		}
+
 		console.log(spreadsheet);
 	}
 
@@ -489,15 +503,6 @@ class BackendService {
 	}
 
 	/**
-	 * Retrieves table information using PRAGMA.
-	 * @param {string} sheetName - The sheet name.
-	 * @returns {Promise<Array<Array<string>>>}
-	 */
-	async getTableMetadata(sheetName) {
-		return await this.databaseService.getTableMetadata(sheetName);
-	}
-
-	/**
 	 * Retrieves foreign key constraints for a table.
 	 * @param {string} sheetName - The sheet name.
 	 * @returns {Promise<Array<Array<any>>>}
@@ -513,4 +518,121 @@ class BackendService {
 	async exportDb() {
 		return await this.databaseService.exportDb();
 	}
+
+	//#region JSON Import/Export
+
+	/**
+	 *
+	 * @param {Object} jsonData
+	 * @param {Array<string>} columns
+	 */
+	#JsonDataValidator(jsonData, columns) {
+		if (
+			jsonData == null ||
+			jsonData?.columns == null ||
+			jsonData?.values == null
+		) {
+			throw new Error("JSON Data Null");
+		}
+		// Implement validation logic here
+		if (jsonData.columns.length !== columns.length) {
+			throw new Error("JSON Columns Length Mismatch");
+		}
+
+		jsonData?.values?.forEach((_row, _rowId) => {
+			if (_row.length !== columns.length) {
+				throw new Error("JSON Data inappropriate");
+			}
+		});
+	}
+
+	/**
+	 * Handles importing JSON data into the spreadsheet.
+	 * @param {Spreadsheet} spreadsheet
+	 * @param {File} jsonFile - The JSON file to import.
+	 */
+	async HandleJsonImport(spreadsheet, jsonFile) {
+		try {
+			// Return a new promise that resolves when the async file reading is done
+			return new Promise((resolve, reject) => {
+				const reader = new FileReader();
+
+				reader.onload = async (e) => {
+					try {
+						// 1. Parse and Validate
+						const res = JSON.parse(e.target.result);
+						// Assume #JsonDataValidator is a synchronous method and works
+						this.#JsonDataValidator(res, spreadsheet.columns);
+
+						// 2. Determine Start Row ID
+						const rowIds = this.#getAllModifiedRowKeys(spreadsheet.columnTree);
+						const startRowID = rowIds.size > 0 ? Math.max(...rowIds) + 1 : 1; // Safely determine next ID
+
+						// 3. Insert Data into Spreadsheet
+						const jsonColumns = res.columns;
+						const jsonValues = res.values;
+						const fileDataRowCount = jsonValues.length;
+
+						for (let r = 0; r < fileDataRowCount; r++) {
+							const row = jsonValues[r];
+							const rowId = startRowID + r;
+
+							for (let c = 0; c < jsonColumns.length; c++) {
+								const cellValue = row[c];
+								// Assuming the column key is the index 'c'
+								spreadsheet.insertData(rowId, c, cellValue, {});
+							}
+						}
+
+						// 4. Update Max Row Count
+						spreadsheet.maxRows += fileDataRowCount;
+
+						resolve(); // SUCCESS: Resolve the promise after all insertions
+					} catch (ex) {
+						console.error("reader.onload failed:", ex);
+						reject(ex); // FAILURE: Reject the promise on error
+					}
+				};
+
+				reader.onerror = () => {
+					reject(new Error("Failed to read file."));
+				};
+
+				reader.readAsText(jsonFile);
+			});
+		} catch (ex) {
+			console.error("HandleJsonImport", ex);
+			throw ex;
+		}
+	}
+
+	/**
+	 * Handles exporting the spreadsheet data as a JSON Blob.
+	 * @param {Spreadsheet} spreadsheet
+	 * @returns {Blob}
+	 */
+	HandleJsonExport(spreadsheet) {
+		let blob = null;
+
+		try {
+			//fetch columns
+			const dataRows = this.#GetDataArrayFromSparseTree(spreadsheet);
+
+			const data = {
+				columns: spreadsheet.columns,
+				values: dataRows,
+			};
+
+			if (data != null) {
+				blob = new Blob([JSON.stringify(data)], { type: "application/json" });
+			}
+		} catch (error) {
+			console.log("ExportJsonForNotInMemory", error);
+			throw error;
+		}
+
+		return blob;
+	}
+
+	//#endregion
 }

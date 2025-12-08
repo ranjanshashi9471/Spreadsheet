@@ -372,7 +372,6 @@ class DatabaseService {
 	 * @returns {Promise<Array<Array<string>>>} A promise that resolves to the column info.
 	 */
 	async getTableInfo(tableName) {
-		debugger;
 		const result = await this.runQuery(`PRAGMA table_info("${tableName}");`);
 		console.log("getTableInfo result:", result);
 		return result ? result.values : [];

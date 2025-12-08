@@ -432,7 +432,7 @@ class SpreadsheetUI {
 
 				const input = document.createElement("input");
 				input.type = "text";
-				input.className = `${colName}-input-cell`;
+				input.className = `${colName} input-cell`;
 				input.name = sheetName;
 
 				// RETRIEVE DATA: Get value,style from the data structure
@@ -902,7 +902,6 @@ class SpreadsheetUI {
 	 * This will create a new table in the DB and populate it.
 	 */
 	async saveSpreadsheetToDb(event) {
-		debugger;
 		if (!this.currentSpreadsheet) {
 			alert("No in-memory spreadsheet to save.");
 			return;
@@ -960,12 +959,12 @@ class SpreadsheetUI {
 	 */
 	async exportJson(event) {
 		event.preventDefault();
-		const sheetName = event.target.name;
+		const sheetName = this.currentSpreadsheet.sheetName;
 		try {
-			const res = await this.spreadsheetService.selectAllFromTable(sheetName);
-			if (res) {
-				const jsonData = JSON.stringify(res, null, 2); // Pretty print JSON
-				const blob = new Blob([jsonData], { type: "application/json" });
+			const blob = await this.spreadsheetService.HandleJsonExport(
+				this.currentSpreadsheet
+			);
+			if (blob) {
 				const url = URL.createObjectURL(blob);
 				const a = document.createElement("a");
 				a.href = url;
@@ -989,160 +988,29 @@ class SpreadsheetUI {
 	 */
 	async loadJson(event) {
 		event.preventDefault();
-		const file = event.target.files[0];
-		const sheetName = event.target.name; // This is the name of the existing sheet
+		try {
+			const file = event.target.files[0];
 
-		if (!file) {
-			alert("No file selected.");
-			return;
-		}
-
-		const reader = new FileReader();
-		reader.readAsText(file);
-
-		reader.onload = async (e) => {
-			try {
-				const res = JSON.parse(e.target.result);
-				if (!res || !res.columns || !res.values) {
-					// JSON format from runQuery result
-					alert(
-						"Invalid JSON file format. Expected an object with 'columns' and 'values' properties."
-					);
-					return;
-				}
-
-				const jsonColumns = res.columns;
-				const jsonValues = res.values;
-				const file_row_count = jsonValues.length;
-
-				let db_col_count = 0;
-				let nextRowId = 1;
-				let tableExists = false;
-
-				try {
-					const metadata = await this.spreadsheetService.getTableMetadata(
-						sheetName
-					);
-					if (metadata) {
-						db_col_count = metadata.column_count;
-						nextRowId = parseInt(metadata.max_id, 10) + 1;
-						tableExists = true;
-					}
-				} catch (error) {
-					console.warn(
-						`Table '${sheetName}' might not exist. Will attempt to create if needed.`,
-						error
-					);
-				}
-
-				if (tableExists && db_col_count >= jsonColumns.length) {
-					// Existing table compatible, insert data
-					const colsToInsert = jsonColumns.map((col) => `"${col}"`).join(", ");
-
-					for (let i = 0; i < file_row_count; i++) {
-						const rowData = jsonValues[i];
-						// Ensure rowData has enough elements for the columns
-						if (rowData.length !== jsonColumns.length) {
-							console.warn(
-								`Skipping row ${i + 1} due to column count mismatch.`
-							);
-							continue;
-						}
-
-						const values = [];
-						// Assuming the first JSON column corresponds to 'c0' (row ID) in DB if it's primary key
-						// You might need more sophisticated mapping if column names differ.
-						values.push(`${nextRowId}`); // Use generated ID for new rows
-						for (let j = 1; j < rowData.length; j++) {
-							values.push(`"${String(rowData[j]).replace(/"/g, '""')}"`); // Sanitize string values
-						}
-						let query = `INSERT INTO "${sheetName}" (c0, ${jsonColumns
-							.slice(1)
-							.map((col) => `"${col}"`)
-							.join(", ")}) VALUES (${values.join(", ")});`;
-						nextRowId++;
-
-						try {
-							await this.spreadsheetService.runQuery(query);
-						} catch (error) {
-							alert(
-								`Error while inserting Data from file into existing table at row ${
-									i + 1
-								}. See console.`
-							);
-							console.error(error);
-							break;
-						}
-					}
-					await this.renderSheet(e, sheetName); // Re-render the sheet
-				} else {
-					// Table doesn't exist or has too few columns, create a new table
-					const newSheetName = `imported_sheet_${Math.floor(
-						Math.random() * 100000
-					)}`;
-					let createTableQuery = `CREATE TABLE "${newSheetName}" (c0 INTEGER PRIMARY KEY`;
-					jsonColumns.forEach((colName, index) => {
-						if (index !== 0) {
-							// Assuming c0 is the ID, other columns come from JSON
-							createTableQuery += ` ,"${colName}" TEXT`;
-						}
-					});
-					createTableQuery += `);`;
-
-					try {
-						await this.spreadsheetService.runQuery(createTableQuery);
-					} catch (error) {
-						console.error("Error creating new table for JSON import:", error);
-						alert("Error creating new table for JSON import.");
-						return;
-					}
-
-					// Insert data into the newly created table
-					const colsToInsert = jsonColumns.map((col) => `"${col}"`).join(" ,");
-					let currentIdForNewTable = 1;
-
-					for (let i = 0; i < file_row_count; i++) {
-						const rowData = jsonValues[i];
-						if (rowData.length !== jsonColumns.length) {
-							console.warn(
-								`Skipping row ${
-									i + 1
-								} due to column count mismatch for new table.`
-							);
-							continue;
-						}
-
-						const values = [];
-						values.push(`${currentIdForNewTable}`); // Assign new sequential ID
-						for (let j = 1; j < rowData.length; j++) {
-							values.push(`"${String(rowData[j]).replace(/"/g, '""')}"`); // Sanitize string values
-						}
-						let query = `INSERT INTO "${newSheetName}" (c0, ${jsonColumns
-							.slice(1)
-							.map((col) => `"${col}"`)
-							.join(", ")}) VALUES (${values.join(", ")});`;
-						currentIdForNewTable++;
-
-						try {
-							await this.spreadsheetService.runQuery(query);
-						} catch (error) {
-							alert(
-								`Error while inserting Data from file into new table at row ${
-									i + 1
-								}. See console.`
-							);
-							console.error(error);
-							break;
-						}
-					}
-					await this.renderSheet(e, newSheetName); // Render the newly created sheet
-					this.renderSheetsNames(e, false); // Update side panel with new sheet
-				}
-			} catch (error) {
-				console.error("Error processing JSON file:", error);
-				alert("Error parsing or loading JSON file.");
+			if (!file) {
+				alert("No file selected.");
+				return;
 			}
-		};
+
+			// --- FIX: AWAIT the HandleJsonImport promise ---
+			await this.spreadsheetService.HandleJsonImport(
+				this.currentSpreadsheet,
+				file
+			);
+
+			// --- This code now executes ONLY after the data is inserted ---
+			console.log("File Import Handled");
+			this.#renderTableBody();
+			alert("JSON file imported successfully.");
+		} catch (error) {
+			// Catch errors rejected by the promise
+			console.error("Error importing JSON file:", error);
+			alert(error.message || "Error importing JSON file.");
+		}
 	}
 
 	/**

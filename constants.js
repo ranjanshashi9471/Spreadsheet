@@ -1,17 +1,17 @@
-var SelectionType = {
+const SelectionType = Object.freeze({
 	Cell: "cell",
 	Row: "row",
 	Column: "column",
 	Range: "range",
-};
+});
 
-var InputType = {
+const InputType = Object.freeze({
 	Text: "text",
 	File: "file",
 	Number: "number",
-};
+});
 
-var ButtonsLabels = {
+const ButtonsLabels = Object.freeze({
 	OK: "OK",
 	Cancel: "Cancel",
 	Yes: "Yes",
@@ -26,8 +26,13 @@ var ButtonsLabels = {
 	ExportJSON: "Export JSON",
 	LoadJSON: "Load JSON",
 	ExportDump: "Export Dump",
-};
+});
 
-var placeholders = {
+const placeholders = Object.freeze({
 	RowCount: "Enter Row Count",
-};
+});
+
+const DATABASEDUMPTYPE = Object.freeze({
+	ARBOR_DUMP: 0,
+	RAW_SQL_DUMP: 1,
+});

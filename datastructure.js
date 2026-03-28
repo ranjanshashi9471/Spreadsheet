@@ -97,7 +97,7 @@ class AVLTree {
 				node.value = value;
 			}
 			if (style !== undefined) {
-				node.style = { ...style };
+				node.style = { ...(node.style || {}), ...style };
 			}
 			return node;
 		}
@@ -187,7 +187,7 @@ class Spreadsheet {
 				colKey,
 				undefined,
 				undefined,
-				(key) => new ColumnNode(key)
+				(key) => new ColumnNode(key),
 			);
 			colNode = this.columnTree.find(colKey); // Re-find after potential root change
 		}
@@ -202,7 +202,7 @@ class Spreadsheet {
 			rowKey,
 			cellValue,
 			style,
-			(key, value, style) => new RowNode(key, value, style)
+			(key, value, style) => new RowNode(key, value, style),
 		);
 	}
 

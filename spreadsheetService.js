@@ -7,12 +7,11 @@ class BackendService {
 	 * @param {object} databaseService - A low-level service for direct database operations.
 	 */
 	constructor(databaseReference) {
-		// Removed unused dataStructure parameter
-		/**
-		 * @property {object} databaseService - A low-level service for direct database operations.
-		 */
-		this.databaseService = new DatabaseService();
-		this.databaseService.initialize();
+		this.databaseService = databaseReference || new DatabaseService();
+		// Only init if it hasn't been initialized
+		if (!this.databaseService.db) {
+			this.databaseService.initialize();
+		}
 	}
 
 	/**
@@ -488,10 +487,14 @@ class BackendService {
 	/**
 	 * Loads a database dump file into the database.
 	 * @param {File} file - The dump file.
-	 * @returns {Promise<void>}
+	 * @returns {Promise<DATABASEDUMPTYPE>}
 	 */
-	async loadDump(file) {
-		await this.databaseService.loadDump(file);
+	async LoadDump(file) {
+		const buffer = await file.arrayBuffer();
+		const array = new Uint8Array(buffer);
+		await this.databaseService.LoadDump(array);
+
+		return await this.CheckDatabaseType();
 	}
 
 	/**
@@ -699,6 +702,19 @@ class BackendService {
 
 	//#endregion
 
-	//#region
-	//#endregion
+	async CheckDatabaseType() {
+		try {
+			const query = `SELECT count(*) as count FROM sqlite_master WHERE type='table' AND name='_sheets';`;
+			const result = await this.databaseService.runQuery(query);
+			debugger;
+
+			const hasArborFingerprint = result?.values[0][0] > 0;
+
+			return hasArborFingerprint
+				? DATABASEDUMPTYPE.ARBOR_DUMP
+				: DATABASEDUMPTYPE.RAW_SQL_DUMP;
+		} catch (error) {
+			throw error;
+		}
+	}
 }

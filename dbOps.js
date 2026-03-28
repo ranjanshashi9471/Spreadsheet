@@ -18,17 +18,16 @@ class DatabaseService {
 		try {
 			if (typeof initSqlJs === "undefined") {
 				console.error(
-					"initSqlJs is not defined. Please ensure sql.js is loaded."
+					"initSqlJs is not defined. Please ensure sql.js is loaded.",
 				);
 				throw new Error("SQL.js library not loaded.");
 			}
 			this.SQL = await initSqlJs();
 			this.db = new this.SQL.Database();
 
-			// --- FIX: Corrected schema with proper syntax and ON DELETE CASCADE ---
-			await this.runSchema(`
-                PRAGMA foreign_keys = ON;
+			this.db.run("PRAGMA foreign_keys = ON;");
 
+			await this.runSchema(`
 				CREATE TABLE IF NOT EXISTS _sheets (
 					sheet_id INTEGER PRIMARY KEY AUTOINCREMENT,
 					sheet_name TEXT UNIQUE NOT NULL,
@@ -130,7 +129,8 @@ class DatabaseService {
 	 */
 	async findSheetByName(sheetName) {
 		const result = await this.runQuery(
-			`SELECT * FROM _sheets WHERE sheet_name = '${sheetName}';`
+			`SELECT * FROM _sheets WHERE sheet_name = ?;`,
+			[sheetName],
 		);
 		return result ? result.values[0] : null;
 	}
@@ -142,7 +142,7 @@ class DatabaseService {
 	 */
 	async findSheetById(sheetId) {
 		const result = await this.runQuery(
-			`SELECT * FROM _sheets WHERE sheet_id = ${sheetId};`
+			`SELECT * FROM _sheets WHERE sheet_id = ${sheetId};`,
 		);
 		return result ? result.values[0] : null;
 	}
@@ -160,7 +160,10 @@ class DatabaseService {
 			sheetName,
 			maxRow,
 		]);
-		return this.db.getRowsModified();
+
+		const result = this.db.exec("SELECT last_insert_rowid() AS id;");
+
+		return result[0].values[0][0];
 	}
 
 	/**
@@ -199,7 +202,7 @@ class DatabaseService {
 		let stmt = null;
 		try {
 			stmt = this.db.prepare(
-				`INSERT INTO _sheet_columns (sheet_id, column_name) VALUES (?, ?);`
+				`INSERT INTO _sheet_columns (sheet_id, column_name) VALUES (?, ?);`,
 			);
 			for (let colId of columnIds) {
 				stmt.run([sheetId, colId]);
@@ -224,7 +227,7 @@ class DatabaseService {
 	async getSheetColumns(sheetId) {
 		this.#ensureDbInitialized();
 		const result = await this.runQuery(
-			`SELECT column_name FROM _sheet_columns WHERE sheet_id = ${sheetId} ORDER BY id;`
+			`SELECT column_name FROM _sheet_columns WHERE sheet_id = ${sheetId} ORDER BY id;`,
 		);
 		return result ? result.values : null;
 	}
@@ -240,7 +243,7 @@ class DatabaseService {
 		let stmt = null;
 		try {
 			stmt = this.db.prepare(
-				"INSERT OR REPLACE INTO _sheet_data (sheet_id, col_id, row_id, cell_value, cell_style) VALUES (?, ?, ?, ?, ?);"
+				"INSERT OR REPLACE INTO _sheet_data (sheet_id, col_id, row_id, cell_value, cell_style) VALUES (?, ?, ?, ?, ?);",
 			);
 			for (const row of largeDataSet) {
 				stmt.run([
@@ -252,10 +255,10 @@ class DatabaseService {
 				]);
 			}
 		} catch (error) {
-			console.error(error);
-			throw new Error("insertBulkData Error inserting bulk data");
+			console.error("SQLite Engine Error during Bulk Insert:", error);
+			throw new Error(`Database Insert Failed: ${error.message}`);
 		} finally {
-			stmt.free();
+			stmt?.free();
 		}
 	}
 
@@ -266,7 +269,7 @@ class DatabaseService {
 	 */
 	async getSheetData(sheetId) {
 		return await this.runQuery(
-			`SELECT * FROM _sheet_data WHERE sheet_id = ${sheetId} ORDER BY col_id;`
+			`SELECT * FROM _sheet_data WHERE sheet_id = ${sheetId} ORDER BY col_id;`,
 		);
 	}
 
@@ -323,7 +326,7 @@ class DatabaseService {
 	async InsertReplaceBulkDataForNotInMemory(
 		targetTableName,
 		targetColumns,
-		dataRows
+		dataRows,
 	) {
 		console.log(targetColumns, targetTableName, dataRows);
 		let stmt = null;
@@ -333,7 +336,7 @@ class DatabaseService {
 			const placeholders = targetColumns.map(() => "?").join(", ");
 
 			stmt = this.db.prepare(
-				`INSERT OR REPLACE INTO "${targetTableName}" (${colNameList}) VALUES (${placeholders});`
+				`INSERT OR REPLACE INTO "${targetTableName}" (${colNameList}) VALUES (${placeholders});`,
 			);
 
 			// Execute bulk run
@@ -344,7 +347,7 @@ class DatabaseService {
 			}
 			console.error("Error inserting/replacing bulk data:", error);
 			throw new Error(
-				`Error inserting/replacing bulk data into table "${targetTableName}": ${error.message}`
+				`Error inserting/replacing bulk data into table "${targetTableName}": ${error.message}`,
 			);
 		}
 	}
@@ -356,7 +359,7 @@ class DatabaseService {
 	async getTableNames() {
 		try {
 			const result = await this.runQuery(
-				"SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('_sheet_columns', '_sheet_data', '_sheets');"
+				"SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('_sheet_columns', '_sheet_data', '_sheets');",
 			);
 			console.log(result);
 			return result ? result.values.map((row) => row[0]) : [];
@@ -393,7 +396,7 @@ class DatabaseService {
 	 */
 	async getForeignKeyList(tableName) {
 		const result = await this.runQuery(
-			`PRAGMA foreign_key_list("${tableName}");`
+			`PRAGMA foreign_key_list("${tableName}");`,
 		);
 		return result ? result.values : [];
 	}
@@ -405,7 +408,7 @@ class DatabaseService {
 	 */
 	async getTableMetadata(tableName) {
 		const result = await this.runQuery(
-			`SELECT cc.column_count, m.max_id from (SELECT MAX(c0) as max_id from "${tableName}") m, (SELECT COUNT(*) as column_count from pragma_table_info("${tableName}")) cc;`
+			`SELECT cc.column_count, m.max_id from (SELECT MAX(c0) as max_id from "${tableName}") m, (SELECT COUNT(*) as column_count from pragma_table_info("${tableName}")) cc;`,
 		);
 		if (result && result.values.length > 0) {
 			return {

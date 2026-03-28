@@ -43,7 +43,7 @@ class BackendService {
 		for (let k = 0; k < noOfIterations; k++) {
 			const currentBatchSize = Math.min(
 				rowsToInsert - k * chunkSize,
-				chunkSize
+				chunkSize,
 			);
 			let query = `INSERT INTO "${sheetName}" (${colList
 				.map((col) => `"${col}"`)
@@ -75,9 +75,8 @@ class BackendService {
 	 * @returns {Promise<object>} A promise that resolves to an object containing foreign key suggestions or an update query.
 	 */
 	async getCellUpdateInfo(sheetName, pKeyList, pKeyValues, colname, value) {
-		const foreignKeysResult = await this.databaseService.getForeignKeyList(
-			sheetName
-		);
+		const foreignKeysResult =
+			await this.databaseService.getForeignKeyList(sheetName);
 		let referringTable = "";
 		let referringColumns = [];
 		foreignKeysResult.forEach((col) => {
@@ -101,9 +100,8 @@ class BackendService {
 					.join(", ")} FROM "${sheetName}" WHERE ${pKeyList
 					.map((key, _id) => `${key} = "${pKeyValues[_id]}"`)
 					.join(" AND ")};`;
-				relatedValuesResult = await this.databaseService.runQuery(
-					relatedValuesQuery
-				);
+				relatedValuesResult =
+					await this.databaseService.runQuery(relatedValuesQuery);
 			}
 
 			let dropdownQuery = `SELECT DISTINCT("${colname}") FROM "${referringTable}" WHERE`;
@@ -153,13 +151,15 @@ class BackendService {
 				: [];
 
 			for (const row of inMemoryRows) {
-				const sheetDataRow = {
-					col_id: col.key,
-					row_id: row.key,
-					cell_value: row.value,
-					cell_style: JSON.stringify(row.style), // Assuming style is a property on RowNode
-				};
-				largeDataSet.push(sheetDataRow);
+				largeDataSet.push({
+					col_id: String(col.key),
+					row_id: String(row.key),
+					cell_value: String(row.value ?? ""),
+					cell_style:
+						row.style && Object.keys(row.style).length > 0
+							? JSON.stringify(row.style)
+							: "{}",
+				});
 			}
 		}
 		return largeDataSet;
@@ -195,6 +195,8 @@ class BackendService {
 	 * @returns {Array<Array<*>>} 2D array of data rows.
 	 */
 	#GetDataArrayFromSparseTree(spreadsheet) {
+		//Used for DB dump and schema related tables only.
+
 		const { columnTree, columns: targetColumns, isInMemory } = spreadsheet;
 
 		// 1. Identify all unique row keys that have been modified in the sparse tree.
@@ -208,11 +210,10 @@ class BackendService {
 
 			targetColumns.forEach((colName, colKey) => {
 				const value = spreadsheet.retrieveCellData(rowId, colKey)?.value || "";
-				// const styles = spreadsheet.retrieveCellData(rowId, colKey)?.style || {};
-
-				// Push value and style (as JSON string) into the row array
 				rowValues.push(value);
 
+				// const styles = spreadsheet.retrieveCellData(rowId, colKey)?.style || {};
+				// Push value and style (as JSON string) into the row array
 				// if (isInMemory && Object.keys(styles).length !== 0) {
 				// 	rowValues.push(JSON.stringify(styles));
 				// }
@@ -266,9 +267,8 @@ class BackendService {
 				throw new Error("In-memory spreadsheet has no columns to save.");
 			}
 
-			let sheetResult = await this.databaseService.findSheetByName(
-				spreadsheetName
-			);
+			let sheetResult =
+				await this.databaseService.findSheetByName(spreadsheetName);
 
 			try {
 				// Start a transaction
@@ -279,12 +279,12 @@ class BackendService {
 
 					sheetId = await this.databaseService.addSheet(
 						spreadsheetName,
-						inMemorySpreadsheet.maxRows
+						inMemorySpreadsheet.maxRows,
 					);
 
 					await this.databaseService.insertColumnNames(
 						sheetId,
-						inMemorySpreadsheet.columns
+						inMemorySpreadsheet.columns,
 					);
 				} else {
 					sheetId = sheetResult[0];
@@ -293,13 +293,13 @@ class BackendService {
 				}
 
 				const largeDataSet = this.#ConvertTreeToDataArray(
-					inMemorySpreadsheet.columnTree
+					inMemorySpreadsheet.columnTree,
 				);
 
 				// Await the bulk insert call
 				await this.databaseService.InsertBulkDataForInMemory(
 					sheetId,
-					largeDataSet
+					largeDataSet,
 				);
 				await this.databaseService.CommitTransaction();
 
@@ -333,25 +333,25 @@ class BackendService {
 			await this.databaseService.InsertReplaceBulkDataForNotInMemory(
 				spreadsheet.sheetName,
 				targetColumns,
-				dataRows
+				dataRows,
 			);
 
 			await this.databaseService.CommitTransaction();
 
 			console.log(
-				`Successfully saved ${dataRows.length} rows to external table: ${spreadsheet.sheetName}`
+				`Successfully saved ${dataRows.length} rows to external table: ${spreadsheet.sheetName}`,
 			);
 		} catch (error) {
 			await this.databaseService.rollbackTransaction();
 			throw new Error(
-				`Failed to save changes to external table "${targetTableName}": ${error.message}`
+				`Failed to save changes to external table "${targetTableName}": ${error.message}`,
 			);
 		}
 	}
 
 	async #loadSheetData(spreadsheet) {
 		const sheetResult = await this.databaseService.findSheetByName(
-			spreadsheet.sheetName
+			spreadsheet.sheetName,
 		);
 
 		if (sheetResult == null) {
@@ -381,11 +381,21 @@ class BackendService {
 		for (const data of sheetData.values) {
 			//data format:
 			// 0: "id", 1: "sheet_id", 2: "col_id", 3: "row_id", 4: "cell_value", 5: "cell_style"
+			let parsedStyle = {};
+
+			if (data[5] && data[5] !== "{}" && data[5] !== "") {
+				try {
+					parsedStyle = JSON.parse(data[5]);
+				} catch (e) {
+					console.error("Failed to parse style from DB:", data[5]);
+				}
+			}
+
 			spreadsheet.insertData(
-				data[3] - "0",
-				data[2] - "0",
-				data[4],
-				JSON.parse(data[5])
+				parseInt(data[3], 10), // row_id
+				parseInt(data[2], 10), // col_id
+				data[4], // cell_value
+				parsedStyle, // cell_style
 			);
 		}
 
@@ -401,7 +411,7 @@ class BackendService {
 		}
 
 		const tableInfo = await this.databaseService.getTableInfo(
-			spreadsheet.sheetName
+			spreadsheet.sheetName,
 		);
 
 		if (tableInfo != null) {
@@ -415,7 +425,7 @@ class BackendService {
 
 		//incase of db dump and schema select statement gives column and values
 		const sheetData = await this.databaseService.selectAllFromTable(
-			spreadsheet.sheetName
+			spreadsheet.sheetName,
 		);
 		console.log("DUMP", sheetData);
 
@@ -522,26 +532,50 @@ class BackendService {
 	//#region JSON Import/Export
 
 	/**
-	 *
+	 * Validates the imported JSON data against the expected schema.
 	 * @param {Object} jsonData
 	 * @param {Array<string>} columns
 	 */
 	#JsonDataValidator(jsonData, columns) {
-		if (
-			jsonData == null ||
-			jsonData?.columns == null ||
-			jsonData?.values == null
-		) {
-			throw new Error("JSON Data Null");
-		}
-		// Implement validation logic here
-		if (jsonData.columns.length !== columns.length) {
-			throw new Error("JSON Columns Length Mismatch");
+		if (jsonData == null || jsonData.columns == null || jsonData.rows == null) {
+			throw new Error(
+				"Invalid JSON schema: Missing 'columns' or 'rows' array.",
+			);
 		}
 
-		jsonData?.values?.forEach((_row, _rowId) => {
-			if (_row.length !== columns.length) {
-				throw new Error("JSON Data inappropriate");
+		// 2. Validate Column Length
+		// (If you want Arbor to adapt to new column sizes automatically, you can remove this check)
+		if (jsonData.columns.length !== columns.length) {
+			throw new Error(
+				`Column mismatch: Expected ${columns.length} columns, but file has ${jsonData.columns.length}.`,
+			);
+		}
+
+		// 3. Validate the internal structure of the new 'rows' objects
+		jsonData.rows.forEach((rowObj, index) => {
+			// Ensure rowId exists and is a valid number
+			if (
+				rowObj.rowId === undefined ||
+				rowObj.rowId === null ||
+				typeof rowObj.rowId !== "number"
+			) {
+				throw new Error(
+					`Invalid data at index ${index}: Missing or invalid 'rowId'.`,
+				);
+			}
+
+			// Ensure cells property is an actual array
+			if (!rowObj.cells || !Array.isArray(rowObj.cells)) {
+				throw new Error(
+					`Invalid data at rowId ${rowObj.rowId}: Missing 'cells' array.`,
+				);
+			}
+
+			// Ensure the data length matches the column length
+			if (rowObj.cells.length !== columns.length) {
+				throw new Error(
+					`Data length mismatch at rowId ${rowObj.rowId}. Expected ${columns.length} cells, got ${rowObj.cells.length}.`,
+				);
 			}
 		});
 	}
@@ -553,7 +587,6 @@ class BackendService {
 	 */
 	async HandleJsonImport(spreadsheet, jsonFile) {
 		try {
-			// Return a new promise that resolves when the async file reading is done
 			return new Promise((resolve, reject) => {
 				const reader = new FileReader();
 
@@ -561,31 +594,43 @@ class BackendService {
 					try {
 						// 1. Parse and Validate
 						const res = JSON.parse(e.target.result);
-						// Assume #JsonDataValidator is a synchronous method and works
-						this.#JsonDataValidator(res, spreadsheet.columns);
 
-						// 2. Determine Start Row ID
-						const rowIds = this.#getAllModifiedRowKeys(spreadsheet.columnTree);
-						const startRowID = rowIds.size > 0 ? Math.max(...rowIds) + 1 : 1; // Safely determine next ID
+						// NOTE: Ensure #JsonDataValidator is updated to expect the new schema if needed
+						if (this.#JsonDataValidator) {
+							this.#JsonDataValidator(res, spreadsheet.columns);
+						}
 
-						// 3. Insert Data into Spreadsheet
-						const jsonColumns = res.columns;
-						const jsonValues = res.values;
-						const fileDataRowCount = jsonValues.length;
+						// 2. Extract the new 'rows' array instead of 'values'
+						const jsonRows = res.rows;
 
-						for (let r = 0; r < fileDataRowCount; r++) {
-							const row = jsonValues[r];
-							const rowId = startRowID + r;
+						if (!jsonRows || !Array.isArray(jsonRows)) {
+							throw new Error("Invalid JSON schema: Missing 'rows' array.");
+						}
 
-							for (let c = 0; c < jsonColumns.length; c++) {
-								const cellValue = row[c];
-								// Assuming the column key is the index 'c'
-								spreadsheet.insertData(rowId, c, cellValue, {});
+						let highestImportedRowId = spreadsheet.maxRows;
+
+						// 3. Insert Data into Spreadsheet at the EXACT Row IDs
+						for (const rowObj of jsonRows) {
+							const targetRowId = rowObj.rowId;
+							const cells = rowObj.cells;
+
+							// Track the highest row ID so the UI knows how far to scroll
+							if (targetRowId > highestImportedRowId) {
+								highestImportedRowId = targetRowId;
+							}
+
+							for (let c = 0; c < cells.length; c++) {
+								const cellValue = cells[c];
+
+								// Optimization: Only insert if there's actual data to save memory
+								if (cellValue !== "" && cellValue !== null) {
+									spreadsheet.insertData(targetRowId, c, cellValue, {});
+								}
 							}
 						}
 
 						// 4. Update Max Row Count
-						spreadsheet.maxRows += fileDataRowCount;
+						spreadsheet.maxRows = highestImportedRowId;
 
 						resolve(); // SUCCESS: Resolve the promise after all insertions
 					} catch (ex) {
@@ -613,18 +658,36 @@ class BackendService {
 	 */
 	HandleJsonExport(spreadsheet) {
 		let blob = null;
+		const { columnTree, columns, isInMemory } = spreadsheet;
 
 		try {
 			//fetch columns
-			const dataRows = this.#GetDataArrayFromSparseTree(spreadsheet);
+			const rowIdSet = this.#getAllModifiedRowKeys(columnTree);
 
-			const data = {
+			const exportPayload = {
+				sheetName: spreadsheet.sheetName,
 				columns: spreadsheet.columns,
-				values: dataRows,
+				rows: [], // Changed from 'values' to 'rows'
 			};
 
-			if (data != null) {
-				blob = new Blob([JSON.stringify(data)], { type: "application/json" });
+			rowIdSet.forEach((_rowId) => {
+				const rowValue = [];
+				columns.forEach((colName, colKey) => {
+					const cellData = spreadsheet.retrieveCellData(_rowId, colKey);
+					rowValue.push(cellData?.value ?? "");
+				});
+
+				// 3. Save the explicit rowId alongside its data
+				exportPayload.rows.push({
+					rowId: Number(_rowId),
+					cells: rowValue,
+				});
+			});
+
+			if (exportPayload != null) {
+				blob = new Blob([JSON.stringify(exportPayload)], {
+					type: "application/json",
+				});
 			}
 		} catch (error) {
 			console.log("ExportJsonForNotInMemory", error);
@@ -634,5 +697,8 @@ class BackendService {
 		return blob;
 	}
 
+	//#endregion
+
+	//#region
 	//#endregion
 }

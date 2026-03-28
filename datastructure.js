@@ -162,9 +162,13 @@ class Spreadsheet {
 	// Export this class
 	constructor(sheetName = "Sheet1") {
 		this.sheetName = sheetName;
-		this.columnTree = new AVLTree();
-		this.columns = [];
+		this.sheetId = 0;
+		this.isInMemory = true;
+		this.columns = []; //if dbdump then columnames will be stored here, else columnIds
 		this.maxRows = 0;
+		this.primaryKeys = new Set(); // Kept for syncing with DB if needed
+		this.primaryKeyMap = new Map(); //used to store rowno as key and primarykey values as value
+		this.columnTree = new AVLTree();
 	}
 
 	/**
@@ -214,7 +218,7 @@ class Spreadsheet {
 			return null;
 		}
 		const rowNode = colNode.rows.find(rowKey);
-		return rowNode ? rowNode.value : null;
+		return rowNode ? { value: rowNode.value, style: rowNode.style } : null;
 	}
 
 	/**
@@ -261,5 +265,10 @@ class Spreadsheet {
 	 */
 	clear() {
 		this.columnTree.root = null;
+		this.columns = [];
+		this.maxRows = 0;
+		this.primaryKeys.clear();
+		this.primaryKeyMap.clear();
+		this.renderData = null;
 	}
 }

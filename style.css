@@ -1,148 +1,276 @@
+/* =========================================
+   Base & Layout
+   ========================================= */
 body {
-	/* margin: 0px; */
+	margin: 0;
 	padding: 0;
-	font-family: sans-serif;
+	font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+	background-color: #f9fbfd;
+	overflow: hidden;
+	/* Prevents whole-page scrolling; the table container handles scrolling */
 }
 
-button {
-	background-color: #3892c2ce; /* Green */
-	color: white;
-	border: none;
-	padding: 10px 20px;
-	text-align: center;
-	text-decoration: none;
-	display: inline-block;
-	font-size: 16px;
-	margin: 4px 2px;
+/* =========================================
+   Toolbar & Buttons
+   ========================================= */
+.toolbar-btn {
+	background-color: #f1f3f4;
+	border: 1px solid transparent;
+	border-radius: 4px;
+	padding: 6px 12px;
+	font-size: 13px;
+	font-weight: 500;
+	color: #3c4043;
 	cursor: pointer;
+	transition: all 0.2s ease;
+}
+
+.toolbar-btn:hover {
+	background-color: #e8eaed;
+	border-color: #dadce0;
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.toolbar-btn.primary {
+	background-color: #1a73e8;
+	color: white;
+}
+
+.toolbar-btn.primary:hover {
+	background-color: #1557b0;
+}
+
+.toolbar-btn.success {
+	background-color: #188038;
+	color: white;
+}
+
+.toolbar-btn.success:hover {
+	background-color: #115927;
+}
+
+.divider {
+	height: 24px;
+	width: 1px;
+	background-color: #dadce0;
+	margin: 0 5px;
+}
+
+/* =========================================
+   Inputs & Controls
+   ========================================= */
+.styled-input {
+	border: 1px solid #dadce0;
 	border-radius: 4px;
-	transition: background-color 0.3s, transform 0.2s;
+	padding: 5px 8px;
+	font-size: 13px;
+	background-color: #ffffff;
+	color: #333;
+	transition: all 0.2s ease;
 }
 
-button:hover {
-	background-color: #28c0c0; /* Darker green on hover */
+.styled-input:focus {
+	outline: none;
+	border-color: #1a73e8;
+	box-shadow: 0 0 3px rgba(26, 115, 232, 0.3);
 }
 
-#user-rows,
-#user-columns,
-.append-rows {
-	border: 1px solid #ccc;
+/* File Upload Button Customization */
+.styled-input::-webkit-file-upload-button {
+	background-color: #f1f3f4;
+	color: #3c4043;
+	border: 1px solid #dadce0;
+	padding: 4px 8px;
+	margin-right: 10px;
 	border-radius: 4px;
-	padding: 8px;
-	margin: 5px;
-	font-size: 16px;
+	cursor: pointer;
+	font-size: 12px;
 }
 
-h2 {
-	text-align: left;
+.styled-input::-webkit-file-upload-button:hover {
+	background-color: #e8eaed;
 }
 
+/* =========================================
+   Table & Spreadsheet Canvas
+   ========================================= */
 table {
-	width: auto;
 	table-layout: fixed;
-	margin-top: 10px;
-	/*table-layout:auto; 
-	/* width: 100%;*/
+	width: max-content;
+	/* CRITICAL: Prevents the table from squishing columns to fit the screen */
 	border-collapse: collapse;
-	/* border: 2px solid black;
-	background-color: #f3f3f3; */
-	border: 2px solid #444;
-	/* background-color: #fafafa;  */
+	border: 1px solid #c0c0c0;
 	font-size: 14px;
-	/* box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);  */
+	background-color: #ffffff;
+}
+
+/* Main scrollable area */
+#user-select {
+	flex: 1;
+	overflow: auto;
+	background: #ffffff;
+	position: relative;
 }
 
 thead {
-	border: 1.5px solid #000;
-	background-color: #e0e0e0;
+	background-color: #f8f9fa;
 	color: #333;
-	font-weight: bold;
+	font-weight: 500;
 }
+
 thead tr {
 	position: sticky;
 	top: 0;
-	z-index: 1;
-	box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+	z-index: 2;
+	/* Needs to be above cells but below dropdowns */
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
 }
 
 th,
 td {
-	padding: 5px;
+	padding: 0;
+	/* Removed padding to allow input to fill cell */
 	text-align: left;
-	border: 1px solid #ccc;
-	white-space: nowrap; /* Prevent text wrapping in cells */
+	border: 1px solid #d3d3d3;
+	white-space: nowrap;
+	position: relative;
 }
 
-#sidepanel-items {
-	border: 1px #000;
-	padding-top: 2%;
+th {
+	width: 120px;
+	/* SET YOUR DESIRED INITIAL WIDTH HERE */
+	min-width: 120px;
+	max-width: 120px;
+	padding: 5px;
+	text-align: center;
+	background-color: #f8f9fa;
+	user-select: none;
 }
 
+th:first-child,
+td:first-child {
+	width: 45px;
+	min-width: 45px;
+	max-width: 45px;
+	text-align: center;
+	background-color: #f8f9fa;
+	color: #666;
+	user-select: none;
+}
+
+.input-cell {
+	width: 100%;
+	height: 100%;
+	min-width: 80px;
+	min-height: 24px;
+	border: none;
+	padding: 4px;
+	box-sizing: border-box;
+	font-family: inherit;
+	font-size: 14px;
+	background-color: transparent;
+}
+
+.input-cell:focus {
+	outline: 2px solid #1a73e8;
+	outline-offset: -2px;
+	background-color: #fff !important;
+	z-index: 1;
+}
+
+/* Resizer Handle */
 .resize {
 	position: absolute;
 	top: 0;
-	right: 0;
+	right: -2px;
 	width: 5px;
 	height: 100%;
 	cursor: col-resize;
 	background: transparent;
+	z-index: 3;
 }
 
-#input-space,
-#rest-all-input {
-	margin: 0px;
-	display: flex;
-	flex-direction: row;
-	justify-content: space-between;
+.resize:hover {
+	background-color: #1a73e8;
 }
 
-thead tr {
-	position: sticky;
+/* =========================================
+   Selection Highlights
+   ========================================= */
+.selected-row td {
+	background-color: #f0f4ff !important;
+}
+
+td.selected-col {
+	background-color: #f0f4ff !important;
+}
+
+td.selected-cell {
+	background-color: #dbeafe !important;
+	outline: 2px solid #1a73e8 !important;
+	outline-offset: -2px;
+	position: relative;
 	z-index: 1;
 }
 
-th {
-	width: 200px;
-	margin: 2% 4% 2%;
-	position: relative;
-	background-color: #f3f3f3;
-	/* width: 100%; */
-	/* white-space: nowrap; */
+.selected-cell input.input-cell {
+	background-color: transparent !important;
+	border: none;
+	outline: none;
 }
 
-td {
-	width: 200px;
-	justify-items: center;
-	/* margin: 2% 4% 2%; */
-	/* border: 1px solid black; */
-}
-th:first-child,
-td:first-child {
-	width: 50px;
-	text-align: center;
-	background-color: #f5f5f5;
+th.selected-col,
+td.C0.selected-row {
+	background-color: #1a73e8 !important;
+	color: white !important;
 	font-weight: bold;
 }
 
-td input {
-	width: 197px;
-	border: transparent;
+/* =========================================
+   Bottom Tabs
+   ========================================= */
+.sheet-tab {
+	padding: 8px 16px;
+	background-color: #e8eaed;
+	color: #5f6368;
+	font-size: 13px;
+	font-weight: 500;
+	cursor: pointer;
+	border-radius: 4px 4px 0 0;
+	border: 1px solid transparent;
+	border-bottom: none;
+	transition: background-color 0.2s;
+	user-select: none;
 }
 
-.hidden {
-	display: none;
+.sheet-tab:hover {
+	background-color: #dadce0;
 }
 
+.sheet-tab.active {
+	background-color: #ffffff;
+	color: #1a73e8;
+	border-color: #e0e4e8;
+	box-shadow: 0 -2px 4px rgba(0, 0, 0, 0.02);
+}
+
+/* =========================================
+   Dropdowns & Utilities
+   ========================================= */
 .container {
 	position: relative;
+	width: 100%;
+	height: 100%;
 }
 
 .dropdown {
 	padding-left: 0;
+	margin: 0;
 	position: absolute;
 	top: 100%;
 	left: 0;
-	width: 75%;
+	width: 100%;
+	min-width: 120px;
 	background-color: #fff;
 	border: 1px solid #ccc;
 	border-top: none;
@@ -151,181 +279,21 @@ td input {
 	max-height: 150px;
 	overflow-y: auto;
 	z-index: 10;
-	display: none; /* Hide dropdown initially */
+	display: none;
 }
 
 .dropdown li {
-	padding: 5px;
+	padding: 6px 10px;
 	cursor: pointer;
 	border-bottom: 1px solid #eee;
+	font-size: 13px;
+	list-style-type: none;
 }
 
 .dropdown li:hover {
-	background-color: #f1f1f1;
+	background-color: #f1f3f4;
 }
 
-/* The sidepanel menu */
-.sidepanel {
-	height: 100%; /* Specify a height */
-	width: 0; /* 0 width - change this with JavaScript */
-	position: fixed; /* Stay in place */
-	z-index: 2; /* Stay on top */
-	top: 0;
-	left: 0;
-	background-color: #111; /* Black*/
-	overflow-x: hidden; /* Disable horizontal scroll */
-	padding-top: 60px; /* Place content 60px from the top */
-	transition: 0.5s; /* 0.5 second transition effect to slide in the sidepanel */
-}
-
-/* The sidepanel links */
-.sidepanel a {
-	padding: 8px 8px 8px 32px;
-	text-decoration: none;
-	font-size: 15px;
-	color: #818181;
-	display: block;
-	transition: 0.3s;
-}
-
-/* When you mouse over the navigation links, change their color */
-.sidepanel a:hover {
-	color: #f1f1f1;
-}
-
-/* Position and style the close button (top right corner) */
-.sidepanel .sidepanel-close {
-	position: absolute;
-	top: 0;
-	right: 25px;
-	font-size: 36px;
-	margin-left: 50px;
-}
-
-/* Style the button that is used to open the sidepanel */
-.sidepanel-open {
-	font-size: 20px;
-	cursor: pointer;
-	background-color: #111;
-	color: white;
-	padding: 10px 15px;
-	border: none;
-}
-
-.sidepanel-open:hover {
-	background-color: #444;
-}
-
-#options a {
-	cursor: pointer;
-}
-
-.input-cell {
-	width: 100px;
-	height: 30px;
-}
-
-/* Class to highlight a selected row */
-.selected-row {
-	background-color: #e0e0ff; /* Light blue for selection */
-	outline: 2px solid blue; /* Optional: outline for stronger feedback */
-}
-
-/* Class to highlight a selected column (cells within that column) */
-.selected-col {
-	background-color: #e0ffe0; /* Light green for selection */
-	outline: 2px solid green; /* Optional: outline for stronger feedback */
-}
-
-/* Ensure selected state is visible */
-.selected-row > td,
-.selected-row > th {
-	/* Prevents child background from covering parent highlight if cell has its own color */
-	/* This might need careful handling if individual cells can also have colors */
-}
-
-/* .pagination {
-	display: inline-block;
-	margin-top: 10px;
-	margin-bottom: 10px;
-}
-
-.pagination a {
-	color: black;
-	float: left;
-	padding: 8px 16px;
-	text-decoration: none;
-	transition: background-color 0.3s;
-}
-
-.pagination a:hover,
-#options a {
-	cursor: pointer;
-}
-
-/* Style the active/current link */
-/* .pagination a.active {
-	background-color: dodgerblue;
-	color: white;
-}
-
-.pagination a:hover:not(.active) {
-	background-color: #ddd;
-} */
-
-/* CSS */
-.styled-input {
-	font-family: Arial, sans-serif;
-	font-size: 16px;
-	padding: 10px 15px;
-	border-radius: 8px;
-	border: 2px solid #4caf50;
-	background-color: #f9f9f9;
-	color: #333;
-	cursor: pointer;
-	transition: all 0.3s ease;
-	width: 250px;
-}
-
-/* Hover effect */
-.styled-input:hover {
-	border-color: #45a049;
-	background-color: #f1fdf1;
-}
-
-/* Focus effect */
-.styled-input:focus {
-	outline: none;
-	box-shadow: 0 0 5px #4caf50;
-}
-
-/* Customize the file button in Chrome, Edge, Safari */
-.styled-input::-webkit-file-upload-button {
-	background-color: #4caf50;
-	color: white;
-	border: none;
-	padding: 8px 12px;
-	margin-right: 10px;
-	border-radius: 5px;
-	cursor: pointer;
-	transition: background-color 0.3s ease;
-}
-
-.styled-input::-webkit-file-upload-button:hover {
-	background-color: #45a049;
-}
-
-/* Firefox */
-.styled-input::-moz-file-upload-button {
-	background-color: #4caf50;
-	color: white;
-	border: none;
-	padding: 8px 12px;
-	border-radius: 5px;
-	cursor: pointer;
-	transition: background-color 0.3s ease;
-}
-
-.styled-input::-moz-file-upload-button:hover {
-	background-color: #45a049;
+.hidden {
+	display: none;
 }

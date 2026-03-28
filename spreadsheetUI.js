@@ -14,6 +14,7 @@ class SpreadsheetUI {
 		this.lastClickedRowKey = null;
 		this.lastClickedColKey = null;
 
+		this.anchorCell = null;
 		this.isDragging = false;
 		this.dragStartRowKey = null;
 		this.dragStartColKey = null;
@@ -30,8 +31,6 @@ class SpreadsheetUI {
 
 		document.addEventListener("mousemove", (e) => this.#handleDragMove(e));
 		document.addEventListener("mouseup", (e) => this.#handleDragEnd(e));
-
-		this.openSidePanel();
 	}
 
 	/**
@@ -40,229 +39,166 @@ class SpreadsheetUI {
 	 */
 	#renderBaseUI() {
 		this.rootElement.innerHTML = `
-            <div id="sidepanel-items" class="sidepanel">
-                <div id="options">
-                    <a class="sidepanel-close" id="closeSidePanelBtn">&times;</a>
-                    <a id="addNewSheetInputBtn">Add new Sheet</a>
-                    <a id="renderDbDumpInputBtn">Load from Database Dump</a>
-                    <a id="renderSchemaInputBtn">Load from Schema File</a>
-                    <a id="renderSQLInputBtn">Run SQL query</a>
-                </div>
-                <div id="sheet-list"></div>
+            <div id="arbor-app-container" style="display: flex; flex-direction: column; height: 100vh; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f9fbfd;">
+                
+                <header id="top-toolbar" style="border-bottom: 1px solid #e0e4e8; background: #ffffff; padding: 10px 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.02); z-index: 10;">
+                    
+                    <div id="file-operations" style="display: flex; gap: 8px; margin-bottom: 10px; align-items: center; flex-wrap: wrap;">
+                        <button class="toolbar-btn primary" id="addNewSheetInputBtn">+ New Sheet</button>
+                        <div class="divider"></div>
+                        <button class="toolbar-btn" id="renderDbDumpInputBtn">Load DB</button>
+                        <button class="toolbar-btn" id="renderSchemaInputBtn">Load Schema</button>
+                        <button class="toolbar-btn" id="renderSQLInputBtn">SQL Query</button>
+                        
+                        <div id="global-input-space" style="margin-left: 10px; display: flex; align-items: center; gap: 8px;"></div>
+                    </div>
+
+                    <div id="sheet-features" style="display: flex; gap: 15px; align-items: center; min-height: 32px;">
+                        <span style="color: #888; font-size: 0.9em; font-style: italic;">Select or create a sheet to view tools</span>
+                    </div>
+                </header>
+
+                <main id="user-select" style="flex: 1; overflow: auto; background: #ffffff; position: relative;">
+                    </main>
+
+                <footer id="sheet-tabs" style="border-top: 1px solid #e0e4e8; background: #f1f4f9; display: flex; padding: 5px 10px; gap: 5px; overflow-x: auto; min-height: 40px; align-items: center;">
+                    </footer>
             </div>
-            <div id="input-space">
-                <div id="sidepanel-btn">
-                    <button class="sidepanel-open" id="openSidePanelOpener">&#9776;</button>
-                </div>
-                <div id="rest-all-input"></div>
-            </div>
-            <div id="user-select"></div>
         `;
 
-		document
-			.getElementById("closeSidePanelBtn")
-			?.addEventListener("click", (event) => {
-				event.preventDefault();
-				this.closeSidePanel();
-			});
+		// Attach Global Listeners
 		document
 			.getElementById("addNewSheetInputBtn")
-			?.addEventListener("click", (event) => {
-				event.preventDefault();
+			?.addEventListener("click", (e) => {
+				e.preventDefault();
 				this.addNewSheetInput();
 			});
 		document
 			.getElementById("renderDbDumpInputBtn")
-			?.addEventListener("click", (event) => {
-				event.preventDefault();
+			?.addEventListener("click", (e) => {
+				e.preventDefault();
 				this.renderDbDumpInput();
 			});
 		document
 			.getElementById("renderSchemaInputBtn")
-			?.addEventListener("click", (event) => {
-				event.preventDefault();
+			?.addEventListener("click", (e) => {
+				e.preventDefault();
 				this.renderSchemaInput();
 			});
 		document
 			.getElementById("renderSQLInputBtn")
-			?.addEventListener("click", (event) => {
-				event.preventDefault();
+			?.addEventListener("click", (e) => {
+				e.preventDefault();
 				this.renderSQLInput();
 			});
-		document
-			.getElementById("openSidePanelOpener")
-			?.addEventListener("click", (event) => {
-				event.preventDefault();
-				this.openSidePanel();
-			});
-	}
-
-	/**
-	 * Attaches global event listeners like keyboard navigation.
-	 * @private
-	 */
-	#attachGlobalEventListeners() {
-		document.addEventListener("keydown", (e) => this.#handleGlobalKeyDown(e));
-		document.addEventListener("click", (e) => {
-			if (!e.target.closest(".container")) {
-				document.querySelectorAll(".dropdown").forEach((dropdown) => {
-					dropdown.style.display = "none";
-				});
-			}
-		});
-	}
-
-	/**
-	 * Handles global keyboard navigation for spreadsheet cells.
-	 * @param {KeyboardEvent} e - The keyboard event.
-	 * @private
-	 */
-	#handleGlobalKeyDown(e) {
-		const focused_element = document.activeElement;
-		if (
-			focused_element.tagName === "INPUT" &&
-			focused_element.classList.contains("input-cell")
-		) {
-			const cell = focused_element.parentElement.parentElement;
-			const row = cell.parentElement;
-			const tableBody = row.parentElement;
-			const rowIndex = Array.from(tableBody.children).indexOf(row);
-			const cellIndex = Array.from(row.children).indexOf(cell);
-			const getCellInput = (rIdx, cIdx) => {
-				const targetRow = tableBody.children[rIdx];
-				if (targetRow) {
-					const targetCell = targetRow.children[cIdx];
-					if (targetCell) {
-						return targetCell.querySelector("input.input-cell");
-					}
-				}
-				return null;
-			};
-			let nextInput = null;
-			switch (e.key) {
-				case "ArrowUp":
-					if (rowIndex > 0) {
-						e.preventDefault();
-						nextInput = getCellInput(rowIndex - 1, cellIndex);
-					}
-					break;
-				case "ArrowDown":
-					if (rowIndex < tableBody.children.length - 1) {
-						e.preventDefault();
-						nextInput = getCellInput(rowIndex + 1, cellIndex);
-					}
-					break;
-				case "ArrowLeft":
-					if (cellIndex > 1) {
-						e.preventDefault();
-						nextInput = getCellInput(rowIndex, cellIndex - 1);
-					}
-					break;
-				case "ArrowRight":
-					if (cellIndex < row.children.length - 1) {
-						e.preventDefault();
-						nextInput = getCellInput(rowIndex, cellIndex + 1);
-					}
-					break;
-			}
-			if (nextInput) {
-				nextInput.focus();
-			}
-		}
 	}
 
 	/**
 	 * Displays UI for adding a new sheet (rows and columns input).
 	 */
 	addNewSheetInput() {
-		const space = document.getElementById("rest-all-input");
-		space.innerHTML = "";
+		const space = document.getElementById("global-input-space");
+		space.innerHTML = `
+            <input type="number" id="user-rows" class="styled-input" placeholder="Rows" style="width: 70px;">
+            <input type="number" id="user-columns" class="styled-input" placeholder="Cols" style="width: 70px;">
+            <button class="toolbar-btn primary" id="confirmNewSheetBtn">Create</button>
+            <button class="toolbar-btn" id="cancelInputBtn">Cancel</button>
+        `;
 
-		const userInputDiv = document.createElement("div");
-		userInputDiv.id = "user-input";
+		document
+			.getElementById("confirmNewSheetBtn")
+			.addEventListener("click", async (e) => {
+				e.preventDefault();
+				await this.startBlankSpreadsheet();
+				space.innerHTML = ""; // Clear input space after creation
+			});
 
-		const rowsInput = document.createElement("input");
-		rowsInput.type = "number";
-		rowsInput.id = "user-rows";
-		rowsInput.placeholder = "Enter number of rows";
-		userInputDiv.appendChild(rowsInput);
-
-		const columnsInput = document.createElement("input");
-		columnsInput.type = "number";
-		columnsInput.id = "user-columns";
-		columnsInput.placeholder = "Enter number of columns (max 26)";
-		userInputDiv.appendChild(columnsInput);
-
-		const createButton = document.createElement("button");
-		createButton.textContent = "Create New Sheet";
-		createButton.addEventListener("click", async (event) => {
-			event.preventDefault();
-			await this.startBlankSpreadsheet();
+		document.getElementById("cancelInputBtn").addEventListener("click", (e) => {
+			e.preventDefault();
+			space.innerHTML = "";
 		});
-		userInputDiv.appendChild(createButton);
-		space.appendChild(userInputDiv);
-		this.closeSidePanel();
 	}
 
 	/**
 	 * Displays UI for loading a database dump file.
 	 */
 	renderDbDumpInput() {
-		const space = document.getElementById("rest-all-input");
-		space.innerHTML = "";
-		const fileInput = document.createElement("input");
-		fileInput.name = "db-dump-input";
-		fileInput.type = "file";
-		fileInput.id = "dbDumpFileInput";
-		fileInput.style.marginLeft = "10px";
-		fileInput.addEventListener("change", (event) => {
-			event.preventDefault();
-			this.handleDbDumpFile(event);
-		});
-		space.appendChild(fileInput);
-		this.closeSidePanel();
+		const space = document.getElementById("global-input-space");
+		space.innerHTML = `
+            <input type="file" id="dbDumpFileInput" class="styled-input">
+            <button class="toolbar-btn" id="cancelInputBtn">Cancel</button>
+        `;
+		document
+			.getElementById("dbDumpFileInput")
+			.addEventListener("change", (e) => {
+				this.handleDbDumpFile(e);
+				space.innerHTML = "";
+			});
+		document
+			.getElementById("cancelInputBtn")
+			.addEventListener("click", () => (space.innerHTML = ""));
 	}
 
 	/**
 	 * Displays UI for loading a schema SQL file.
 	 */
 	renderSchemaInput() {
-		const space = document.getElementById("rest-all-input");
-		space.innerHTML = "";
-		const fileInput = document.createElement("input");
-		fileInput.name = "schema-input";
-		fileInput.type = "file";
-		fileInput.id = "schemaFileInput";
-		fileInput.style.marginLeft = "10px";
-		fileInput.addEventListener("change", (event) => {
-			event.preventDefault();
-			this.handleSchemaFile(event);
-		});
-		space.appendChild(fileInput);
-		this.closeSidePanel();
+		const space = document.getElementById("global-input-space");
+		space.innerHTML = `
+            <input type="file" id="schemaFileInput" class="styled-input">
+            <button class="toolbar-btn" id="cancelInputBtn">Cancel</button>
+        `;
+		document
+			.getElementById("schemaFileInput")
+			.addEventListener("change", (e) => {
+				this.handleDbDumpFile(e);
+				space.innerHTML = "";
+			});
+
+		document
+			.getElementById("cancelInputBtn")
+			.addEventListener("click", () => (space.innerHTML = ""));
 	}
 
 	/**
-	 * Displays UI for running an arbitrary SQL query.
+	 * Displays UI for running an arbitrary SQL query in the top toolbar.
 	 */
 	renderSQLInput() {
-		const space = document.getElementById("rest-all-input");
-		space.innerHTML = "";
-		const queryTextarea = document.createElement("textarea");
-		queryTextarea.rows = 5;
-		queryTextarea.cols = 40;
-		queryTextarea.id = "query-input";
-		queryTextarea.spellcheck = false;
-		queryTextarea.placeholder = "Enter your query";
-		space.appendChild(queryTextarea);
-		const submitButton = document.createElement("button");
-		submitButton.textContent = "Submit";
-		space.appendChild(submitButton);
-		submitButton.addEventListener("click", (event) => {
-			event.preventDefault();
-			this.executeUserQuery();
-		});
-		this.closeSidePanel();
+		// Target the new toolbar input area
+		const space = document.getElementById("global-input-space");
+
+		// Inject a compact textarea and our styled toolbar buttons
+		space.innerHTML = `
+            <textarea 
+                id="query-input" 
+                class="styled-input" 
+                rows="1" 
+                spellcheck="false" 
+                placeholder="Enter SQL (e.g., SELECT * FROM _sheets)" 
+                style="width: 350px; min-height: 28px; resize: vertical; font-family: 'Courier New', monospace; margin-right: 5px;"
+            ></textarea>
+            <button class="toolbar-btn primary" id="submitQueryBtn">Execute</button>
+            <button class="toolbar-btn" id="cancelQueryBtn">Cancel</button>
+        `;
+
+		// Attach event listener for execution
+		document
+			.getElementById("submitQueryBtn")
+			.addEventListener("click", (event) => {
+				event.preventDefault();
+				this.executeUserQuery(event);
+			});
+
+		// Attach event listener to easily close/hide the SQL input
+		document
+			.getElementById("cancelQueryBtn")
+			.addEventListener("click", (event) => {
+				event.preventDefault();
+				space.innerHTML = "";
+			});
+
+		// Auto-focus the textarea so the user can start typing immediately
+		document.getElementById("query-input").focus();
 	}
 
 	/**
@@ -275,7 +211,6 @@ class SpreadsheetUI {
 			const file = event.target.files[0];
 			await this.spreadsheetService.loadDump(file);
 			await this.renderSheetsNames(event, false);
-			this.openSidePanel();
 		} catch (error) {
 			console.error(error);
 			alert(error.message || "Error Loading Dump!!");
@@ -296,7 +231,6 @@ class SpreadsheetUI {
 				e.preventDefault();
 				await this.spreadsheetService.runSchema(e.target.result);
 				this.renderSheetsNames(e, false);
-				this.openSidePanel();
 			};
 		} catch (error) {
 			console.error(error);
@@ -430,9 +364,16 @@ class SpreadsheetUI {
 				const inputContainer = document.createElement("div");
 				inputContainer.className = "container";
 
+				td.addEventListener("mousedown", (e) => {
+					// If user clicks the cell background (not the input specifically)
+					if (e.target === td) {
+						this.#handleDragStart(rowno, colKey, "cell", e);
+					}
+				});
+
 				const input = document.createElement("input");
 				input.type = "text";
-				input.className = `${colName}-input-cell`;
+				input.className = `${colName} input-cell`;
 				input.name = sheetName;
 
 				// RETRIEVE DATA: Get value,style from the data structure
@@ -453,7 +394,7 @@ class SpreadsheetUI {
 
 				// EVENT LISTENER: Unified Handler
 				input.addEventListener("input", (e) =>
-					this.handleInputChange(e, rowno, colKey, isInMemory)
+					this.handleInputChange(e, rowno, colKey, isInMemory),
 				);
 
 				// Dropdown for Suggestions
@@ -483,7 +424,7 @@ class SpreadsheetUI {
 	 * Initiates the creation of a new in-memory spreadsheet and prepares the UI.
 	 * This does NOT immediately save to the database.
 	 */
-	async startBlankSpreadsheet() {
+	startBlankSpreadsheet() {
 		const rowCountInput = document.getElementById("user-rows");
 		const colCountInput = document.getElementById("user-columns");
 
@@ -525,13 +466,12 @@ class SpreadsheetUI {
 		if (event) event.preventDefault();
 
 		try {
-			this.closeSidePanel();
 			this.#clearSelection();
 
 			// 1. Load Data into Structure (handled by Service)
 			this.currentSpreadsheet = await this.spreadsheetService.loadSpreadsheet(
 				sheetName,
-				isInMemory
+				isInMemory,
 			);
 
 			if (this.currentSpreadsheet) {
@@ -605,129 +545,131 @@ class SpreadsheetUI {
 	}
 
 	/**
-	 * Adds event listeners for column resizing.
-	 * @private
-	 */
-	#addResizing() {
-		const divclass = document.querySelectorAll(".resize");
-		divclass.forEach((resizer) => {
-			resizer.removeEventListener("mousedown", resizer._boundMouseDownHandler);
-			resizer._boundMouseDownHandler = (e) => {
-				const th = e.target.parentElement;
-				const col_class = th.classList[0];
-				const startWidth = th.offsetWidth;
-				const startX = e.pageX;
-				const onMouseMove = (moveEvent) => {
-					moveEvent.preventDefault();
-					const newWidth = startWidth + (moveEvent.pageX - startX);
-					if (newWidth >= 50) {
-						document.querySelectorAll(`.${col_class}`).forEach((element) => {
-							if (element.tagName === "INPUT") {
-								element.style.width = `${newWidth - 3}px`;
-							} else {
-								element.style.width = `${newWidth}px`;
-							}
-						});
-					}
-				};
-				const onMouseUp = (e) => {
-					e.preventDefault();
-					document.removeEventListener("mousemove", onMouseMove);
-					document.removeEventListener("mouseup", onMouseUp);
-				};
-				document.addEventListener("mousemove", onMouseMove);
-				document.addEventListener("mouseup", onMouseUp);
-			};
-			resizer.addEventListener("mousedown", resizer._boundMouseDownHandler);
-		});
-	}
-
-	/**
 	 * Renders additional UI features like insert rows, save buttons.
-	 * @param {string} sheetName - The name of the sheet.
-	 * @param {Array<string>} sheetColList - List of column names for the sheet.
 	 * @param {boolean} isInMemory - True if this is an in-memory spreadsheet (show save button), false otherwise.
 	 * @private
 	 */
 	#renderSheetFeatures(isInMemory) {
 		const sheetName = this.currentSpreadsheet.sheetName;
-		const restInput = document.getElementById("rest-all-input");
-		restInput.innerHTML = "";
+		const featuresContainer = document.getElementById("sheet-features");
+		featuresContainer.innerHTML = ""; // Clear placeholder or previous sheet's tools
 
-		const mainContainerDiv = document.createElement("div");
-		mainContainerDiv.style.cssText =
-			"margin: 10px 0px; display: flex; flex-direction: row;";
+		// --- Formatting Group ---
+		const formatGroup = document.createElement("div");
+		formatGroup.style.cssText =
+			"display: flex; align-items: center; gap: 5px; border-right: 1px solid #ccc; padding-right: 15px;";
 
-		const rowInputContainerDiv = document.createElement("div");
+		const colorPicker = document.createElement("input");
+		colorPicker.type = "color";
+		colorPicker.id = "cellColorPicker";
+		colorPicker.value = "#dbeafe";
+		colorPicker.title = "Choose highlight color";
+		colorPicker.style.cssText =
+			"cursor: pointer; border: none; padding: 0; width: 25px; height: 25px; border-radius: 4px;";
+
+		const fillBtn = document.createElement("button");
+		fillBtn.className = "toolbar-btn";
+		fillBtn.textContent = "Fill Color";
+		fillBtn.addEventListener("click", (e) => {
+			e.preventDefault();
+			this.applyBackgroundColor(
+				document.getElementById("cellColorPicker").value,
+			);
+		});
+
+		formatGroup.appendChild(colorPicker);
+		formatGroup.appendChild(fillBtn);
+
+		// --- Layout Group (Rows/Cols) ---
+		const layoutGroup = document.createElement("div");
+		layoutGroup.style.cssText =
+			"display: flex; align-items: center; gap: 5px; border-right: 1px solid #ccc; padding-right: 15px;";
 
 		const rowCountInput = document.createElement("input");
-		rowCountInput.type = InputType.Number;
+		rowCountInput.type = "number";
 		rowCountInput.id = `${sheetName}-row-input`;
-		rowCountInput.classList.add("styled-input");
-		rowCountInput.placeholder = placeholders.RowCount;
-		rowInputContainerDiv.appendChild(rowCountInput);
+		rowCountInput.className = "styled-input";
+		rowCountInput.placeholder = "Rows";
+		rowCountInput.style.width = "60px";
 
 		const insertRowsButton = document.createElement("button");
-		insertRowsButton.textContent = ButtonsLabels.InsertEmptyRow;
-		insertRowsButton.id = "insertRowsBtn";
-		insertRowsButton.style.marginLeft = "10px";
-		insertRowsButton.dataset.sheetName = sheetName;
-		insertRowsButton.dataset.colList = this.currentSpreadsheet.columns;
-		insertRowsButton.dataset.isInMemory = isInMemory.toString();
-		insertRowsButton.addEventListener("click", (event) => {
-			event.preventDefault();
-			const btn = event.currentTarget;
-			this.insertRows(event);
-		});
-		rowInputContainerDiv.appendChild(insertRowsButton);
-		mainContainerDiv.appendChild(rowInputContainerDiv);
+		insertRowsButton.className = "toolbar-btn";
+		insertRowsButton.textContent = "Insert Rows";
+		insertRowsButton.addEventListener("click", (e) => this.insertRows(e));
+
+		layoutGroup.appendChild(rowCountInput);
+		layoutGroup.appendChild(insertRowsButton);
+
+		// --- Sync/Data Group ---
+		const syncGroup = document.createElement("div");
+		syncGroup.style.cssText = "display: flex; align-items: center; gap: 5px;";
 
 		const saveToDbButton = document.createElement("button");
-		saveToDbButton.textContent = ButtonsLabels.SaveSyncSheet;
-		saveToDbButton.id = "saveBtn";
-		saveToDbButton.style.marginLeft = "10px";
-		saveToDbButton.addEventListener("click", (event) => {
-			event.preventDefault();
-			this.saveSpreadsheetToDb(event);
-		});
-		mainContainerDiv.appendChild(saveToDbButton);
+		saveToDbButton.className = "toolbar-btn success";
+		saveToDbButton.textContent = "Save to DB";
+		saveToDbButton.addEventListener("click", (e) =>
+			this.saveSpreadsheetToDb(e),
+		);
 
 		const exportJsonButton = document.createElement("button");
-		exportJsonButton.textContent = ButtonsLabels.ExportJSON;
-		exportJsonButton.id = "exportJsonBtn";
-		exportJsonButton.style.marginLeft = "10px";
-		exportJsonButton.dataset.sheetName = sheetName;
-		exportJsonButton.addEventListener("click", (event) => {
-			event.preventDefault();
-			this.exportJson(event);
+		exportJsonButton.className = "toolbar-btn";
+		exportJsonButton.textContent = "Export JSON";
+		exportJsonButton.addEventListener("click", (e) => this.exportJson(e));
+
+		const renderJsonInputBtn = document.createElement("button");
+		renderJsonInputBtn.className = "toolbar-btn";
+		renderJsonInputBtn.textContent = "Import JSON";
+		renderJsonInputBtn.addEventListener("click", (e) => {
+			e.preventDefault();
+			this.#renderJsonInput();
 		});
 
-		mainContainerDiv.appendChild(exportJsonButton);
-
-		const loadJsonInput = document.createElement("input");
-		loadJsonInput.type = InputType.File;
-		loadJsonInput.id = "loadJsonFileInput";
-		loadJsonInput.classList.add("styled-input");
-		loadJsonInput.style.marginLeft = "10px";
-		loadJsonInput.dataset.sheetName = sheetName;
-		loadJsonInput.addEventListener("change", (event) => {
-			event.preventDefault();
-			this.loadJson(event);
-		});
-
-		mainContainerDiv.appendChild(loadJsonInput);
 		const exportDbDumpButton = document.createElement("button");
-		exportDbDumpButton.textContent = ButtonsLabels.ExportDump;
-		exportDbDumpButton.id = "generateDbDumpBtn";
-		exportDbDumpButton.style.marginLeft = "10px";
-		exportDbDumpButton.dataset.sheetName = sheetName;
-		exportDbDumpButton.addEventListener("click", (event) => {
-			event.preventDefault();
-			this.handleExportDBdump(event);
+		exportDbDumpButton.className = "toolbar-btn";
+		exportDbDumpButton.textContent = "Export Dump";
+		exportDbDumpButton.addEventListener("click", (e) =>
+			this.handleExportDBdump(e),
+		);
+
+		syncGroup.appendChild(saveToDbButton);
+		syncGroup.appendChild(exportJsonButton);
+		syncGroup.appendChild(renderJsonInputBtn);
+		syncGroup.appendChild(exportDbDumpButton);
+
+		// Append all groups
+		featuresContainer.appendChild(formatGroup);
+		featuresContainer.appendChild(layoutGroup);
+		featuresContainer.appendChild(syncGroup);
+	}
+
+	/**
+	 * Displays UI for loading a JSON file into the active spreadsheet.
+	 */
+	#renderJsonInput() {
+		const space = document.getElementById("global-input-space");
+
+		// Inject the file input and cancel button
+		space.innerHTML = `
+            <span style="font-size: 13px; color: #5f6368; font-weight: 500;">Select JSON:</span>
+            <input type="file" id="jsonFileInput" class="styled-input" accept=".json">
+            <button class="toolbar-btn" id="cancelJsonInputBtn">Cancel</button>
+        `;
+
+		// 1. Listen for the file selection
+		document.getElementById("jsonFileInput").addEventListener("change", (e) => {
+			// We pass the event to your existing loadJson method
+			this.loadJson(e);
+			// Instantly clear the input space so the UI returns to normal
+			space.innerHTML = "";
 		});
 
-		mainContainerDiv.appendChild(exportDbDumpButton);
-		restInput.appendChild(mainContainerDiv);
+		// 2. Listen for the Cancel action
+		document
+			.getElementById("cancelJsonInputBtn")
+			.addEventListener("click", (e) => {
+				e.preventDefault();
+				space.innerHTML = "";
+			});
 	}
 
 	/**
@@ -756,16 +698,15 @@ class SpreadsheetUI {
 				startRowId = maxKey + 1;
 			} else {
 				try {
-					const metadata = await this.spreadsheetService.getTableMetadata(
-						sheetName
-					);
+					const metadata =
+						await this.spreadsheetService.getTableMetadata(sheetName);
 					if (metadata && metadata.max_id !== null) {
 						startRowId = parseInt(metadata.max_id, 10) + 1;
 					}
 				} catch (error) {
 					console.warn(
 						"Could not determine previous max row ID from DB, starting from 1.",
-						error
+						error,
 					);
 				}
 			}
@@ -792,7 +733,7 @@ class SpreadsheetUI {
 								event,
 								currentRowId,
 								columns[j],
-								isInMemory
+								isInMemory,
 							);
 						});
 						const dropdownList = document.createElement("ul");
@@ -833,7 +774,7 @@ class SpreadsheetUI {
 		event.preventDefault();
 		const { name: sheetName, value } = event.target;
 		const dropdown = document.getElementById(
-			`${sheetName}-${rowno}-${colno}-dropdown`
+			`${sheetName}-${rowno}-${colno}-dropdown`,
 		);
 
 		if (isInMemory) {
@@ -844,7 +785,7 @@ class SpreadsheetUI {
 
 		try {
 			const pKeyList = Array.from(this.currentSpreadsheet.primaryKeys).map(
-				(colId, _id) => this.currentSpreadsheet.columns[colId]
+				(colId, _id) => this.currentSpreadsheet.columns[colId],
 			);
 
 			const pKeyValues = this.currentSpreadsheet.primaryKeyMap.get(rowno);
@@ -854,7 +795,7 @@ class SpreadsheetUI {
 				pKeyList,
 				pKeyValues,
 				this.currentSpreadsheet.columns[colno],
-				value
+				value,
 			);
 
 			if (updateInfo.type !== "foreignKey") {
@@ -876,12 +817,12 @@ class SpreadsheetUI {
 								this.currentSpreadsheet.insertData(
 									rowno,
 									colno,
-									e.target.dataset.value
+									e.target.dataset.value,
 								);
 							} catch (updateError) {
 								console.error(
 									"Error updating cell with dropdown value:",
-									updateError
+									updateError,
 								);
 								alert("Error updating cell value.");
 							}
@@ -902,7 +843,6 @@ class SpreadsheetUI {
 	 * This will create a new table in the DB and populate it.
 	 */
 	async saveSpreadsheetToDb(event) {
-		debugger;
 		if (!this.currentSpreadsheet) {
 			alert("No in-memory spreadsheet to save.");
 			return;
@@ -910,16 +850,16 @@ class SpreadsheetUI {
 		try {
 			if (this.currentSpreadsheet.isInMemory) {
 				this.currentSpreadsheet.columns = this.currentSpreadsheet.columns.map(
-					(col) => this.#toColumnIndex(col)
+					(col) => this.#toColumnIndex(col),
 				);
 			}
 
 			await this.spreadsheetService.SaveSpreadsheetChanges(
-				this.currentSpreadsheet
+				this.currentSpreadsheet,
 			);
 
 			alert(
-				`Spreadsheet '${this.currentSpreadsheet.sheetName}' successfully saved to database.`
+				`Spreadsheet '${this.currentSpreadsheet.sheetName}' successfully saved to database.`,
 			);
 
 			this.currentSpreadsheet.clear();
@@ -960,12 +900,12 @@ class SpreadsheetUI {
 	 */
 	async exportJson(event) {
 		event.preventDefault();
-		const sheetName = event.target.name;
+		const sheetName = this.currentSpreadsheet.sheetName;
 		try {
-			const res = await this.spreadsheetService.selectAllFromTable(sheetName);
-			if (res) {
-				const jsonData = JSON.stringify(res, null, 2); // Pretty print JSON
-				const blob = new Blob([jsonData], { type: "application/json" });
+			const blob = await this.spreadsheetService.HandleJsonExport(
+				this.currentSpreadsheet,
+			);
+			if (blob) {
 				const url = URL.createObjectURL(blob);
 				const a = document.createElement("a");
 				a.href = url;
@@ -989,160 +929,26 @@ class SpreadsheetUI {
 	 */
 	async loadJson(event) {
 		event.preventDefault();
-		const file = event.target.files[0];
-		const sheetName = event.target.name; // This is the name of the existing sheet
+		try {
+			const file = event.target.files[0];
 
-		if (!file) {
-			alert("No file selected.");
-			return;
-		}
-
-		const reader = new FileReader();
-		reader.readAsText(file);
-
-		reader.onload = async (e) => {
-			try {
-				const res = JSON.parse(e.target.result);
-				if (!res || !res.columns || !res.values) {
-					// JSON format from runQuery result
-					alert(
-						"Invalid JSON file format. Expected an object with 'columns' and 'values' properties."
-					);
-					return;
-				}
-
-				const jsonColumns = res.columns;
-				const jsonValues = res.values;
-				const file_row_count = jsonValues.length;
-
-				let db_col_count = 0;
-				let nextRowId = 1;
-				let tableExists = false;
-
-				try {
-					const metadata = await this.spreadsheetService.getTableMetadata(
-						sheetName
-					);
-					if (metadata) {
-						db_col_count = metadata.column_count;
-						nextRowId = parseInt(metadata.max_id, 10) + 1;
-						tableExists = true;
-					}
-				} catch (error) {
-					console.warn(
-						`Table '${sheetName}' might not exist. Will attempt to create if needed.`,
-						error
-					);
-				}
-
-				if (tableExists && db_col_count >= jsonColumns.length) {
-					// Existing table compatible, insert data
-					const colsToInsert = jsonColumns.map((col) => `"${col}"`).join(", ");
-
-					for (let i = 0; i < file_row_count; i++) {
-						const rowData = jsonValues[i];
-						// Ensure rowData has enough elements for the columns
-						if (rowData.length !== jsonColumns.length) {
-							console.warn(
-								`Skipping row ${i + 1} due to column count mismatch.`
-							);
-							continue;
-						}
-
-						const values = [];
-						// Assuming the first JSON column corresponds to 'c0' (row ID) in DB if it's primary key
-						// You might need more sophisticated mapping if column names differ.
-						values.push(`${nextRowId}`); // Use generated ID for new rows
-						for (let j = 1; j < rowData.length; j++) {
-							values.push(`"${String(rowData[j]).replace(/"/g, '""')}"`); // Sanitize string values
-						}
-						let query = `INSERT INTO "${sheetName}" (c0, ${jsonColumns
-							.slice(1)
-							.map((col) => `"${col}"`)
-							.join(", ")}) VALUES (${values.join(", ")});`;
-						nextRowId++;
-
-						try {
-							await this.spreadsheetService.runQuery(query);
-						} catch (error) {
-							alert(
-								`Error while inserting Data from file into existing table at row ${
-									i + 1
-								}. See console.`
-							);
-							console.error(error);
-							break;
-						}
-					}
-					await this.renderSheet(e, sheetName); // Re-render the sheet
-				} else {
-					// Table doesn't exist or has too few columns, create a new table
-					const newSheetName = `imported_sheet_${Math.floor(
-						Math.random() * 100000
-					)}`;
-					let createTableQuery = `CREATE TABLE "${newSheetName}" (c0 INTEGER PRIMARY KEY`;
-					jsonColumns.forEach((colName, index) => {
-						if (index !== 0) {
-							// Assuming c0 is the ID, other columns come from JSON
-							createTableQuery += ` ,"${colName}" TEXT`;
-						}
-					});
-					createTableQuery += `);`;
-
-					try {
-						await this.spreadsheetService.runQuery(createTableQuery);
-					} catch (error) {
-						console.error("Error creating new table for JSON import:", error);
-						alert("Error creating new table for JSON import.");
-						return;
-					}
-
-					// Insert data into the newly created table
-					const colsToInsert = jsonColumns.map((col) => `"${col}"`).join(" ,");
-					let currentIdForNewTable = 1;
-
-					for (let i = 0; i < file_row_count; i++) {
-						const rowData = jsonValues[i];
-						if (rowData.length !== jsonColumns.length) {
-							console.warn(
-								`Skipping row ${
-									i + 1
-								} due to column count mismatch for new table.`
-							);
-							continue;
-						}
-
-						const values = [];
-						values.push(`${currentIdForNewTable}`); // Assign new sequential ID
-						for (let j = 1; j < rowData.length; j++) {
-							values.push(`"${String(rowData[j]).replace(/"/g, '""')}"`); // Sanitize string values
-						}
-						let query = `INSERT INTO "${newSheetName}" (c0, ${jsonColumns
-							.slice(1)
-							.map((col) => `"${col}"`)
-							.join(", ")}) VALUES (${values.join(", ")});`;
-						currentIdForNewTable++;
-
-						try {
-							await this.spreadsheetService.runQuery(query);
-						} catch (error) {
-							alert(
-								`Error while inserting Data from file into new table at row ${
-									i + 1
-								}. See console.`
-							);
-							console.error(error);
-							break;
-						}
-					}
-					await this.renderSheet(e, newSheetName); // Render the newly created sheet
-					this.renderSheetsNames(e, false); // Update side panel with new sheet
-				}
-			} catch (error) {
-				console.error("Error processing JSON file:", error);
-				alert("Error parsing or loading JSON file.");
+			if (!file) {
+				alert("No file selected.");
+				return;
 			}
-		};
+
+			await this.spreadsheetService.HandleJsonImport(
+				this.currentSpreadsheet,
+				file,
+			);
+
+			console.log("File Import Handled");
+			this.#renderTableBody();
+			alert("JSON file imported successfully.");
+		} catch (error) {
+			console.error("Error importing JSON file:", error);
+			alert(error.message || "Error importing JSON file.");
+		}
 	}
 
 	/**
@@ -1152,28 +958,267 @@ class SpreadsheetUI {
 	 */
 	async renderSheetsNames(event, isInMemory = true) {
 		try {
-			const sheetList = document.getElementById("sheet-list");
-			sheetList.innerHTML = ""; // Clear existing list
-			const tableNames = await this.spreadsheetService.getSheetNames(
-				isInMemory
-			);
+			const sheetTabsContainer = document.getElementById("sheet-tabs");
+			if (!sheetTabsContainer) return;
+
+			sheetTabsContainer.innerHTML = ""; // Clear existing tabs
+
+			const tableNames =
+				await this.spreadsheetService.getSheetNames(isInMemory);
+
 			if (tableNames.length > 0) {
 				tableNames.forEach((tableName) => {
-					const anch = document.createElement("a");
-					anch.innerHTML = `${tableName}`;
-					anch.setAttribute("href", "#");
-					anch.classList.add("anch");
-					anch.addEventListener("click", async (e) => {
+					const tab = document.createElement("div");
+					tab.textContent = tableName;
+					// Check if this is the currently active sheet to highlight the tab
+					const isActive =
+						this.currentSpreadsheet &&
+						this.currentSpreadsheet.sheetName === tableName;
+
+					tab.className = `sheet-tab ${isActive ? "active" : ""}`;
+
+					tab.addEventListener("click", async (e) => {
 						e.preventDefault();
-						await this.renderSheet(e, tableName, isInMemory); // Use class method
+						await this.renderSheet(e, tableName, isInMemory);
+						// Re-render tabs to update the 'active' class
+						this.renderSheetsNames(e, isInMemory);
 					});
-					sheetList.appendChild(anch);
+
+					sheetTabsContainer.appendChild(tab);
 				});
+			} else {
+				sheetTabsContainer.innerHTML = `<span style="color: #888; font-size: 0.9em;">No sheets available in DB.</span>`;
 			}
-			this.openSidePanel();
 		} catch (error) {
 			console.error("Error rendering sheet names:", error);
 			alert(error.message || "Could not retrieve sheet names.");
+		}
+	}
+
+	//#region Event Handlers for Selection and Dragging
+
+	/**
+	 * Adds event listeners for column resizing.
+	 * @private
+	 */
+	#addResizing() {
+		const divclass = document.querySelectorAll(".resize");
+		divclass.forEach((resizer) => {
+			resizer.removeEventListener("mousedown", resizer._boundMouseDownHandler);
+			resizer._boundMouseDownHandler = (e) => {
+				const th = e.target.parentElement;
+				const col_class = th.classList[0];
+				const startWidth = th.offsetWidth;
+				const startX = e.pageX;
+				const onMouseMove = (moveEvent) => {
+					moveEvent.preventDefault();
+					const newWidth = startWidth + (moveEvent.pageX - startX);
+					if (newWidth >= 50) {
+						document.querySelectorAll(`.${col_class}`).forEach((element) => {
+							if (element.tagName === "INPUT") {
+								element.style.width = `${newWidth - 3}px`;
+							} else {
+								element.style.width = `${newWidth}px`;
+							}
+						});
+					}
+				};
+				const onMouseUp = (e) => {
+					e.preventDefault();
+					document.removeEventListener("mousemove", onMouseMove);
+					document.removeEventListener("mouseup", onMouseUp);
+				};
+				document.addEventListener("mousemove", onMouseMove);
+				document.addEventListener("mouseup", onMouseUp);
+			};
+			resizer.addEventListener("mousedown", resizer._boundMouseDownHandler);
+		});
+	}
+
+	/**
+	 * Attaches global event listeners like keyboard navigation.
+	 * @private
+	 */
+	#attachGlobalEventListeners() {
+		document.addEventListener("keydown", (e) => this.#handleGlobalKeyDown(e));
+		document.addEventListener("click", (e) => {
+			if (!e.target.closest(".container")) {
+				document.querySelectorAll(".dropdown").forEach((dropdown) => {
+					dropdown.style.display = "none";
+				});
+			}
+		});
+	}
+
+	#selectCellRange(startRow, startColIdx, endRow, endColIdx) {
+		this.selectedRowKeys.clear();
+		this.selectedColKeys.clear();
+
+		// Rows
+		const rStart = Math.min(startRow, endRow);
+		const rEnd = Math.max(startRow, endRow);
+		for (let r = rStart; r <= rEnd; r++) this.selectedRowKeys.add(r);
+
+		// Columns
+		const cStart = Math.min(startColIdx, endColIdx);
+		const cEnd = Math.max(startColIdx, endColIdx);
+		for (let c = cStart; c <= cEnd; c++) {
+			const colKey = this.currentSpreadsheet.columns[c];
+			this.selectedColKeys.add(colKey);
+		}
+	}
+
+	/**
+	 * Clears value data for all cells in the current selection.
+	 * @private
+	 */
+	#clearSelectedCellValues() {
+		this.selectedRowKeys.forEach((rowKey) => {
+			this.selectedColKeys.forEach((colKey) => {
+				const colIdx = this.currentSpreadsheet.columns.indexOf(colKey);
+
+				// 1. Update AVL Tree
+				this.currentSpreadsheet.insertData(rowKey, colIdx, "");
+
+				// 2. Update DOM
+				const input = document.querySelector(
+					`input[data-rowno="${rowKey}"][data-colno="${colIdx}"]`,
+				);
+				if (input) input.value = "";
+			});
+		});
+	}
+
+	/**
+	 * Handles global keyboard navigation for spreadsheet cells.
+	 * @param {KeyboardEvent} e - The keyboard event.
+	 * @private
+	 */
+	#handleGlobalKeyDown(e) {
+		const focused = document.activeElement;
+		const isInputFocused =
+			focused &&
+			focused.tagName === "INPUT" &&
+			focused.classList.contains("input-cell");
+
+		// 1. Handle Bulk Delete / Clear Range
+		if (e.key === "Delete" || e.key === "Backspace") {
+			// Only trigger bulk delete if there's a multi-cell range selected.
+			// If it's just 1 cell, let the user use backspace natively to edit their typo.
+			const hasMultiSelection =
+				this.selectedRowKeys.size > 1 || this.selectedColKeys.size > 1;
+
+			if (hasMultiSelection) {
+				e.preventDefault();
+				this.#clearSelectedCellValues();
+				return;
+			}
+		}
+
+		// 2. Stop executing if we aren't focused on a spreadsheet cell
+		if (!isInputFocused) {
+			return;
+		}
+
+		// Use current state from datasets
+		const rowIdx = parseInt(focused.dataset.rowno);
+		const colIdx = parseInt(focused.dataset.colno);
+
+		const tableBody = focused.closest("tbody");
+
+		// Helper to get input at specific coordinates
+		const getCellInput = (rIdx, cIdx) => {
+			const targetRow = Array.from(tableBody.children).find(
+				(tr) => parseInt(tr.children[0].textContent) === rIdx,
+			);
+
+			if (targetRow) {
+				const targetCell = targetRow.children[cIdx + 1];
+				return targetCell?.querySelector("input.input-cell");
+			}
+
+			return null;
+		};
+
+		// 3. Handle Range Selection (Shift + Arrows)
+		if (e.shiftKey && e.key.startsWith("Arrow")) {
+			e.preventDefault();
+
+			// FIX: Null-safe check applied here
+			if (!this.anchorCell || this.anchorCell.row === null) {
+				this.anchorCell = { row: rowIdx, colIdx: colIdx };
+			}
+
+			let nextRow = rowIdx;
+			let nextCol = colIdx;
+
+			// Determine target based on direction
+			switch (e.key) {
+				case "ArrowUp":
+					nextRow = Math.max(1, rowIdx - 1);
+					break;
+				case "ArrowDown":
+					nextRow = Math.min(this.currentSpreadsheet.maxRows, rowIdx + 1);
+					break;
+				case "ArrowLeft":
+					nextCol = Math.max(0, colIdx - 1);
+					break;
+				case "ArrowRight":
+					nextCol = Math.min(
+						this.currentSpreadsheet.columns.length - 1,
+						colIdx + 1,
+					);
+					break;
+			}
+
+			// Update Range Selection: Anchor -> current Arrow Target
+			this.#selectCellRange(
+				this.anchorCell.row,
+				this.anchorCell.colIdx,
+				nextRow,
+				nextCol,
+			);
+
+			// Move Focus to the expansion edge
+			const nextInput = getCellInput(nextRow, nextCol);
+			if (nextInput) nextInput.focus();
+
+			this.#updateHighlights();
+		}
+		// 4. Handle Standard Navigation (Arrows Only)
+		else if (e.key.startsWith("Arrow")) {
+			this.anchorCell = { row: null, colIdx: null }; // Reset selection anchor
+
+			let targetRow = rowIdx;
+			let targetCol = colIdx;
+
+			switch (e.key) {
+				case "ArrowUp":
+					targetRow = Math.max(1, rowIdx - 1);
+					break;
+				case "ArrowDown":
+					targetRow = Math.min(this.currentSpreadsheet.maxRows, rowIdx + 1);
+					break;
+				case "ArrowLeft":
+					targetCol = Math.max(0, colIdx - 1);
+					break;
+				case "ArrowRight":
+					targetCol = Math.min(
+						this.currentSpreadsheet.columns.length - 1,
+						colIdx + 1,
+					);
+					break;
+			}
+
+			const nextInput = getCellInput(targetRow, targetCol);
+			if (nextInput) {
+				e.preventDefault();
+				nextInput.focus();
+
+				// Clear selection when moving focus normally to behave like Excel
+				this.#clearSelection();
+				this.#updateHighlights();
+			}
 		}
 	}
 
@@ -1182,78 +1227,29 @@ class SpreadsheetUI {
 	 * @private
 	 */
 	#clearSelection() {
-		// Remove 'selected-row' class from all rows (TRs)
-		document
-			.querySelectorAll(".selected-row")
-			.forEach((tr) => tr.classList.remove("selected-row"));
+		this.selectedRowKeys.clear();
+		this.selectedColKeys.clear();
+		this.anchorCell = { row: null, colIdx: null };
 
-		// Remove 'selected-col' class from all elements that might have it (THs and TDs)
-		if (
-			this.currentSpreadsheet?.columns &&
-			this.currentSpreadsheet.columns.length > 0
-		) {
-			this.currentSpreadsheet.columns.forEach((col) => {
-				document
-					.querySelectorAll(`.${this.#toColumnName(col)}`)
-					.forEach((el) => el.classList.remove("selected-col"));
-			});
-		}
-
-		// Reset internal selection state
-		this.selectedRowKey = null;
-		this.selectedColKey = null;
-		this.activeSelectionType = null;
+		// Visually update the UI to reflect the empty state
+		this.#removeAllHighlights();
 	}
 
-	/**
-	 * Applies CSS classes to highlight the currently selected row or column.
-	 * @private
-	 */
-	#highlightSelection(event) {
-		event.preventDefault();
-		if (!this.currentSpreadsheet) return; // No active sheet to highlight on
-
-		if (this.activeSelectionType === "row" && this.selectedRowKey !== null) {
-			const tableBody = document.getElementById(
-				`${this.currentSpreadsheet.sheetName}-data-input`
-			);
-			if (tableBody) {
-				// Find the <tr> element that contains the selected row key
-				const selectedRowElement = Array.from(tableBody.children).find((tr) => {
-					// Assuming the first TD (c0) contains the row number
-					const rowIdCell = tr.children[0];
-					return (
-						rowIdCell &&
-						parseInt(rowIdCell.textContent, 10) === this.selectedRowKey
-					);
-				});
-				if (selectedRowElement) {
-					selectedRowElement.classList.add("selected-row");
-				}
-			}
-		} else if (
-			this.activeSelectionType === "col" &&
-			this.selectedColKey !== null
-		) {
-			// Select all elements (TH and TD) that have the column's class
-			document.querySelectorAll(`.${this.selectedColKey}`).forEach((el) => {
-				el.classList.add("selected-col");
-			});
-		}
-	}
-
-	#handleDragStart(key, type, event) {
+	#handleDragStart(rowKey, colIdx, type, event) {
 		event.preventDefault(); // Prevents browser's native text selection on drag
 		this.isDragging = true;
 		this.#removeAllHighlights(); // Start with a fresh selection
 
-		if (type === "row") {
-			this.dragStartRowKey = key;
-			this.selectedRowKeys.add(key);
+		if (type === "cell") {
+			this.dragStartRowKey = rowKey;
+			this.dragStartColKey = colIdx; // This is the index
+		} else if (type === "row") {
+			this.dragStartRowKey = rowKey;
+			this.selectedRowKeys.add(rowKey);
 			this.selectedColKeys.clear(); // Clear other type of selection
 		} else if (type === "col") {
-			this.dragStartColKey = key;
-			this.selectedColKeys.add(key);
+			this.dragStartColKey = colIdx;
+			this.selectedColKeys.add(colIdx);
 			this.selectedRowKeys.clear(); // Clear other type of selection
 		}
 		this.#updateHighlights();
@@ -1262,23 +1258,22 @@ class SpreadsheetUI {
 	#handleDragMove(event) {
 		if (!this.isDragging) return;
 
-		event.preventDefault(); // Prevents text selection
-		const targetElement = event.target.closest("th, td");
-		if (!targetElement) return;
+		const target = event.target.closest("td");
+		if (!target) return;
 
-		const isHeader = targetElement.tagName === "TH";
-		const isRowNumberCell = targetElement.classList.contains("c0");
+		const input = target.querySelector("input");
+		if (!input) return;
 
-		// Logic for dragging rows
-		if (this.dragStartRowKey !== null && isRowNumberCell) {
-			const endRowKey = parseInt(targetElement.dataset.rowKey, 10);
-			this.#selectRowRange(this.dragStartRowKey, endRowKey);
-			this.#updateHighlights();
-		}
-		// Logic for dragging columns
-		else if (this.dragStartColKey !== null && isHeader) {
-			const endColKey = targetElement.dataset.colKey;
-			this.#selectColumnRange(this.dragStartColKey, endColKey);
+		const currentRow = parseInt(input.dataset.rowno);
+		const currentColIdx = parseInt(input.dataset.colno);
+
+		if (this.dragStartRowKey !== null && this.dragStartColKey !== null) {
+			this.#selectCellRange(
+				this.dragStartRowKey,
+				this.dragStartColKey,
+				currentRow,
+				currentColIdx,
+			);
 			this.#updateHighlights();
 		}
 	}
@@ -1304,7 +1299,7 @@ class SpreadsheetUI {
 		const start = Math.min(startKey, endKey);
 		const end = Math.max(startKey, endKey);
 		const tableBody = document.getElementById(
-			`${this.currentSpreadsheet.sheetName}-data-input`
+			`${this.currentSpreadsheet.sheetName}-data-input`,
 		);
 		if (tableBody) {
 			Array.from(tableBody.children).forEach((tr) => {
@@ -1384,34 +1379,85 @@ class SpreadsheetUI {
 		}
 	}
 
-	#updateHighlights() {
-		this.#removeAllHighlights();
+	/**
+	 * Highlights only the cells where selected rows and selected columns overlap.
+	 * @param {HTMLElement} tableBody - The tbody element of the current sheet.
+	 * @private
+	 */
+	#highlightIntersection(tableBody) {
+		// We only iterate through the selected rows to save performance
 		this.selectedRowKeys.forEach((rowKey) => {
-			const tableBody = document.getElementById(
-				`${this.currentSpreadsheet.sheetName}-data-input`
+			const tr = Array.from(tableBody.children).find(
+				(row) => parseInt(row.children[0].textContent, 10) === rowKey,
 			);
-			const selectedRowElement =
-				tableBody &&
-				Array.from(tableBody.children).find((tr) => {
-					const rowIdCell = tr.children[0];
-					return rowIdCell && parseInt(rowIdCell.textContent, 10) === rowKey;
+
+			if (tr) {
+				// Within the selected row, check every cell
+				Array.from(tr.children).forEach((td, index) => {
+					if (index === 0) return; // Skip the row header (c0)
+
+					// Get the column name/key for this cell index
+					const colKey = this.currentSpreadsheet.columns[index - 1];
+
+					// If this column is ALSO selected, we have an intersection!
+					if (this.selectedColKeys.has(colKey)) {
+						td.classList.add("selected-cell");
+					}
 				});
-			selectedRowElement?.classList.add("selected-row");
+			}
 		});
+	}
+
+	#updateHighlights() {
+		// 1. Wipe the slate clean
+		this.#removeAllHighlights();
+
+		if (!this.currentSpreadsheet) return;
+		const sheetName = this.currentSpreadsheet.sheetName;
+		const tableBody = document.getElementById(`${sheetName}-data-input`);
+		if (!tableBody) return;
+
+		// 2. Highlight Rows
+		this.selectedRowKeys.forEach((rowKey) => {
+			const tr = Array.from(tableBody.children).find(
+				(row) => parseInt(row.children[0].textContent, 10) === rowKey,
+			);
+			tr?.classList.add("selected-row");
+		});
+
+		// 3. Highlight Columns
 		this.selectedColKeys.forEach((colKey) => {
 			document.querySelectorAll(`.${colKey}`).forEach((el) => {
 				el.classList.add("selected-col");
 			});
 		});
+
+		// 4. Highlight the Intersection (The actual selected cells)
+		// This is optional but makes it look like a real spreadsheet
+		if (this.selectedRowKeys.size > 0 && this.selectedColKeys.size > 0) {
+			this.#highlightIntersection(tableBody);
+		}
 	}
 
+	/**
+	 * Removes all selection-related CSS classes from the DOM.
+	 * @private
+	 */
 	#removeAllHighlights() {
+		// 1. Clear Row highlights
 		document
 			.querySelectorAll(".selected-row")
 			.forEach((el) => el.classList.remove("selected-row"));
+
+		// 2. Clear Column highlights
 		document
 			.querySelectorAll(".selected-col")
 			.forEach((el) => el.classList.remove("selected-col"));
+
+		// 3. Clear Individual Cell highlights (The rectangular range)
+		document
+			.querySelectorAll(".selected-cell")
+			.forEach((el) => el.classList.remove("selected-cell"));
 	}
 
 	/**
@@ -1419,71 +1465,81 @@ class SpreadsheetUI {
 	 * @param {string} color - The CSS color string (e.g., "#FF0000", "blue").
 	 */
 	applyBackgroundColor(color) {
-		if (this.selectedRowKeys.size === 0 && this.selectedColKeys.size === 0) {
-			alert("Select cells first.");
+		if (this.selectedRowKeys.size === 0 || this.selectedColKeys.size === 0) {
+			alert("Please select a range of cells first.");
 			return;
 		}
 
-		// 1. Apply to Rows
+		const sheetName = this.currentSpreadsheet.sheetName;
+		const styleUpdate = { backgroundColor: color };
+
+		// Efficiently loop through the selection Sets
 		this.selectedRowKeys.forEach((rowKey) => {
-			// Update UI immediately
-			this.#applyStyleToRowUI(rowKey, { backgroundColor: color });
+			this.selectedColKeys.forEach((colKey) => {
+				const colIdx = this.currentSpreadsheet.columns.indexOf(colKey);
 
-			// Update Data Structure (So it persists on save/redraw)
-			this.currentSpreadsheet.columns.forEach((colKey) => {
-				this.currentSpreadsheet.insertData(rowKey, colKey, undefined, {
-					backgroundColor: color,
-				});
+				// 1. Update In-Memory AVL Tree (Merge style)
+				this.currentSpreadsheet.insertData(
+					rowKey,
+					colIdx,
+					undefined,
+					styleUpdate,
+				);
+
+				// 2. Update the UI
+				const input = document.querySelector(
+					`input[data-rowno="${rowKey}"][data-colno="${colIdx}"]`,
+				);
+				if (input) {
+					const td = input.closest("td");
+					td.style.backgroundColor = color;
+				}
 			});
-		});
-
-		// 2. Apply to Columns
-		this.selectedColKeys.forEach((colKey) => {
-			// Update UI immediately
-			document.querySelectorAll(`.${colKey}`).forEach((el) => {
-				if (el.tagName === "TD") el.style.backgroundColor = color;
-			});
-
-			// Update Data Structure
-			for (let r = 1; r <= this.currentSpreadsheet.maxRows; r++) {
-				this.currentSpreadsheet.insertData(r, colKey, undefined, {
-					backgroundColor: color,
-				});
-			}
 		});
 
 		this.#clearSelection();
 	}
 
-	// Helper for applying styles to specific row DOM elements
+	/**
+	 * Applies a persistent style to a row and saves it to the internal data structure.
+	 * @param {number} rowKey - The row number.
+	 * @param {Object} styleObj - Style properties (e.g., { backgroundColor: 'red' }).
+	 * @private
+	 */
 	#applyStyleToRowUI(rowKey, styleObj) {
-		const tableBody = document.getElementById(
-			`${this.currentSpreadsheet.sheetName}-data-input`
-		);
+		const sheetName = this.currentSpreadsheet.sheetName;
+		const tableBody = document.getElementById(`${sheetName}-data-input`);
+		if (!tableBody) return;
+
+		// 1. Find the TR in the DOM
 		const rows = Array.from(tableBody.children);
-		// Find the TR where the first TD (c0) equals rowKey
 		const tr = rows.find(
-			(row) => parseInt(row.children[0].innerText) === rowKey
+			(row) => parseInt(row.children[0].innerText) === rowKey,
 		);
 
 		if (tr) {
-			Array.from(tr.children).forEach((td) => {
+			// 2. Update the UI for every cell in that row
+			Array.from(tr.children).forEach((td, index) => {
+				if (index === 0) return; // Skip the ID column
 				Object.assign(td.style, styleObj);
+
+				// 3. IMPORTANT: Update the internal data structure!
+				// This ensures the style persists during AVL tree traversals and saves.
+				const colKey = this.currentSpreadsheet.columns[index - 1];
+				this.currentSpreadsheet.insertData(rowKey, colKey, undefined, styleObj);
 			});
 		}
 	}
 
 	/**
-	 * Opens the side panel.
+	 * Applies a color to all selected rows.
+	 * @param {string} color - The CSS color string (e.g., "#FF0000", "blue").
 	 */
-	openSidePanel() {
-		document.getElementById("sidepanel-items").style.width = "250px";
-	}
-
-	/**
-	 * Closes the side panel.
-	 */
-	closeSidePanel() {
-		document.getElementById("sidepanel-items").style.width = "0";
+	applyColorToSelectedRows(color) {
+		this.selectedRowKeys.forEach((rowKey) => {
+			this.#applyStyleToRowUI(rowKey, { backgroundColor: color });
+		});
+		// Optional: clear selection after applying color
+		this.#clearSelection();
 	}
 }

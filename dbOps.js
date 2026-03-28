@@ -91,19 +91,21 @@ class DatabaseService {
 
 	/**
 	 * Loads a database dump file, replacing the current database.
-	 * @param {File} file - The dump file.
+	 * @param {Uint8Array} array - The dump file.
 	 * @returns {Promise<void>}
 	 */
-	async loadDump(file) {
+	async LoadDump(array) {
 		this.#ensureDbInitialized();
 		try {
-			const buffer = await file.arrayBuffer();
-			if (this.db) this.db.close();
-			this.db = new this.SQL.Database(new Uint8Array(buffer));
+			if (this.db) {
+				this.db.close();
+			}
+
+			this.db = await new this.SQL.Database(array);
 			console.log("Database dump loaded successfully.");
 		} catch (error) {
 			console.error("Error loading database dump:", error);
-			throw new Error("Error loading database dump. Please check the file.");
+			throw error;
 		}
 	}
 

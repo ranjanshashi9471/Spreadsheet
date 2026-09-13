@@ -1,9 +1,9 @@
 // main.js (No changes from previous step)
 
-async function initializeApp() {
+async function InitializeApp() {
 	try {
 		const spreadsheetUI = new SpreadsheetUI("root");
-		spreadsheetUI.initializeUI();
+		spreadsheetUI.InitializeUI();
 
 		console.log("Application initialized successfully.");
 	} catch (error) {
@@ -11,4 +11,4 @@ async function initializeApp() {
 	}
 }
 
-document.addEventListener("DOMContentLoaded", initializeApp);
+document.addEventListener("DOMContentLoaded", InitializeApp);

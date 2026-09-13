@@ -10,7 +10,7 @@ class BackendService {
 		this.databaseService = databaseReference || new DatabaseService();
 		// Only init if it hasn't been initialized
 		if (!this.databaseService.db) {
-			this.databaseService.initialize();
+			this.databaseService.Initialize();
 		}
 	}
 
@@ -18,11 +18,11 @@ class BackendService {
 	 * Retrieves the names of all tables (sheets) from the database.
 	 * @returns {Promise<Array<string>>} A promise that resolves to an array of table names.
 	 */
-	async getSheetNames(isInMemory = true) {
+	async GetSheetNames(isInMemory = true) {
 		if (isInMemory) {
-			return await this.databaseService.getSheetNames();
+			return await this.databaseService.GetSheetNames();
 		} else {
-			return await this.databaseService.getTableNames();
+			return await this.databaseService.GetTableNames();
 		}
 	}
 
@@ -34,7 +34,7 @@ class BackendService {
 	 * @param {number} startRowId - The starting row ID for the new rows.
 	 * @returns {Promise<void>} A promise that resolves when the insertion is complete.
 	 */
-	async insertEmptyRows(sheetName, colList, rowsToInsert, startRowId) {
+	async InsertEmptyRows(sheetName, colList, rowsToInsert, startRowId) {
 		const chunkSize = 50;
 		const colCount = colList.length;
 		const noOfIterations = Math.ceil(rowsToInsert / chunkSize);
@@ -59,7 +59,7 @@ class BackendService {
 			}
 			if (valuesToInsert.length > 0) {
 				query += valuesToInsert.join(", ") + ";";
-				await this.databaseService.runQuery(query);
+				await this.databaseService.RunQuery(query);
 			}
 		}
 	}
@@ -73,9 +73,9 @@ class BackendService {
 	 * @param {string} value - The current value of the cell.
 	 * @returns {Promise<object>} A promise that resolves to an object containing foreign key suggestions or an update query.
 	 */
-	async getCellUpdateInfo(sheetName, pKeyList, pKeyValues, colname, value) {
+	async GetCellUpdateInfo(sheetName, pKeyList, pKeyValues, colname, value) {
 		const foreignKeysResult =
-			await this.databaseService.getForeignKeyList(sheetName);
+			await this.databaseService.GetForeignKeyList(sheetName);
 		let referringTable = "";
 		let referringColumns = [];
 		foreignKeysResult.forEach((col) => {
@@ -100,7 +100,7 @@ class BackendService {
 					.map((key, _id) => `${key} = "${pKeyValues[_id]}"`)
 					.join(" AND ")};`;
 				relatedValuesResult =
-					await this.databaseService.runQuery(relatedValuesQuery);
+					await this.databaseService.RunQuery(relatedValuesQuery);
 			}
 
 			let dropdownQuery = `SELECT DISTINCT("${colname}") FROM "${referringTable}" WHERE`;
@@ -113,7 +113,7 @@ class BackendService {
 				});
 			}
 			dropdownQuery += ` "${colname}" LIKE "%${value}%" LIMIT 10;`;
-			const dropdownResult = await this.databaseService.runQuery(dropdownQuery);
+			const dropdownResult = await this.databaseService.RunQuery(dropdownQuery);
 
 			return {
 				type: "foreignKey",
@@ -133,8 +133,8 @@ class BackendService {
 	 * @param {Array<*>} [params=[]] - An array of parameters to bind to the query's placeholders.
 	 * @returns {Promise<void>} A promise that resolves when the update is complete.
 	 */
-	async updateCell(query, params = []) {
-		await this.databaseService.runQuery(query, params);
+	async UpdateCell(query, params = []) {
+		await this.databaseService.RunQuery(query, params);
 	}
 
 	//#region Helpers
@@ -142,11 +142,11 @@ class BackendService {
 	#ConvertTreeToDataArray(columnTree) {
 		const largeDataSet = [];
 
-		const inMemoryColumns = columnTree._traverseInOrder(columnTree.root);
+		const inMemoryColumns = columnTree._TraverseInOrder(columnTree.root);
 
 		for (const col of inMemoryColumns) {
 			const inMemoryRows = col.rows
-				? col.rows._traverseInOrder(col.rows.root)
+				? col.rows._TraverseInOrder(col.rows.root)
 				: [];
 
 			for (const row of inMemoryRows) {
@@ -170,14 +170,14 @@ class BackendService {
 	 * @param {Spreadsheet} spreadsheet
 	 * @returns {Set<number|string>} Set of all modified row keys.
 	 */
-	#getAllModifiedRowKeys(columnTree) {
+	#GetAllModifiedRowKeys(columnTree) {
 		const modifiedRowKeys = new Set();
-		const allColumns = columnTree._traverseInOrder(columnTree.root);
+		const allColumns = columnTree._TraverseInOrder(columnTree.root);
 
 		for (const colNode of allColumns) {
 			if (colNode.rows) {
 				// Traverse the inner row tree for this column
-				const inMemoryRows = colNode.rows._traverseInOrder(colNode.rows.root);
+				const inMemoryRows = colNode.rows._TraverseInOrder(colNode.rows.root);
 				for (const rowNode of inMemoryRows) {
 					modifiedRowKeys.add(rowNode.key); // Add the unique row ID to the Set
 				}
@@ -196,10 +196,12 @@ class BackendService {
 	#GetDataArrayFromSparseTree(spreadsheet) {
 		//Used for DB dump and schema related tables only.
 
-		const { columnTree, columns: targetColumns, isInMemory } = spreadsheet;
+		const { columns: targetColumns } = spreadsheet;
 
 		// 1. Identify all unique row keys that have been modified in the sparse tree.
-		const allModifiedRowKeys = this.#getAllModifiedRowKeys(columnTree);
+		const allModifiedRowKeys = spreadsheet.cellStore?.GetAllModifiedRowKeys
+			? spreadsheet.cellStore.GetAllModifiedRowKeys()
+			: this.#GetAllModifiedRowKeys(spreadsheet.columnTree);
 
 		const dataRows = [];
 
@@ -208,10 +210,10 @@ class BackendService {
 			const rowValues = [];
 
 			targetColumns.forEach((colName, colKey) => {
-				const value = spreadsheet.retrieveCellData(rowId, colKey)?.value || "";
+				const value = spreadsheet.RetrieveCellData(rowId, colKey)?.value || "";
 				rowValues.push(value);
 
-				// const styles = spreadsheet.retrieveCellData(rowId, colKey)?.style || {};
+				// const styles = spreadsheet.RetrieveCellData(rowId, colKey)?.style || {};
 				// Push value and style (as JSON string) into the row array
 				// if (isInMemory && Object.keys(styles).length !== 0) {
 				// 	rowValues.push(JSON.stringify(styles));
@@ -234,10 +236,12 @@ class BackendService {
 	 */
 	async SaveSpreadsheetChanges(inMemorySpreadsheet) {
 		try {
-			if (
-				!inMemorySpreadsheet ||
-				inMemorySpreadsheet.columnTree.root === null
-			) {
+			const isStoreEmpty = inMemorySpreadsheet?.cellStore
+				? inMemorySpreadsheet.cellStore.IsEmpty()
+				: !inMemorySpreadsheet?.columnTree ||
+					inMemorySpreadsheet.columnTree.root === null;
+
+			if (!inMemorySpreadsheet || isStoreEmpty) {
 				throw new Error("No data changes to save.");
 			}
 
@@ -262,12 +266,16 @@ class BackendService {
 		const spreadsheetName = inMemorySpreadsheet.sheetName;
 
 		try {
-			if (inMemorySpreadsheet.columnTree.root === null) {
+			const isStoreEmpty = inMemorySpreadsheet?.cellStore
+				? inMemorySpreadsheet.cellStore.IsEmpty()
+				: inMemorySpreadsheet.columnTree.root === null;
+
+			if (isStoreEmpty) {
 				throw new Error("In-memory spreadsheet has no columns to save.");
 			}
 
 			let sheetResult =
-				await this.databaseService.findSheetByName(spreadsheetName);
+				await this.databaseService.FindSheetByName(spreadsheetName);
 
 			try {
 				// Start a transaction
@@ -276,24 +284,24 @@ class BackendService {
 				if (sheetResult == null) {
 					console.log("Table doesn't exists.");
 
-					sheetId = await this.databaseService.addSheet(
+					sheetId = await this.databaseService.AddSheet(
 						spreadsheetName,
 						inMemorySpreadsheet.maxRows,
 					);
 
-					await this.databaseService.insertColumnNames(
+					await this.databaseService.InsertColumnNames(
 						sheetId,
 						inMemorySpreadsheet.columns,
 					);
 				} else {
 					sheetId = sheetResult[0];
-					await this.databaseService.setUpdatedAtTimestamp(sheetId);
+					await this.databaseService.SetUpdatedAtTimestamp(sheetId);
 					console.log("Using existing table with ID:", sheetId);
 				}
 
-				const largeDataSet = this.#ConvertTreeToDataArray(
-					inMemorySpreadsheet.columnTree,
-				);
+				const largeDataSet = inMemorySpreadsheet.cellStore?.ToDataArray
+					? inMemorySpreadsheet.cellStore.ToDataArray()
+					: this.#ConvertTreeToDataArray(inMemorySpreadsheet.columnTree);
 
 				// Await the bulk insert call
 				await this.databaseService.InsertBulkDataForInMemory(
@@ -304,7 +312,7 @@ class BackendService {
 
 				console.log(`Successfully saved in-memory spreadsheet to DB.`);
 			} catch (error) {
-				await this.databaseService.rollbackTransaction();
+				await this.databaseService.RollbackTransaction();
 				console.error("Error saving in-memory spreadsheet:", error);
 				throw error; // Re-throw to allow the calling UI function to handle it
 			}
@@ -341,15 +349,15 @@ class BackendService {
 				`Successfully saved ${dataRows.length} rows to external table: ${spreadsheet.sheetName}`,
 			);
 		} catch (error) {
-			await this.databaseService.rollbackTransaction();
+			await this.databaseService.RollbackTransaction();
 			throw new Error(
 				`Failed to save changes to external table "${targetTableName}": ${error.message}`,
 			);
 		}
 	}
 
-	async #loadSheetData(spreadsheet) {
-		const sheetResult = await this.databaseService.findSheetByName(
+	async #LoadSheetData(spreadsheet) {
+		const sheetResult = await this.databaseService.FindSheetByName(
 			spreadsheet.sheetName,
 		);
 
@@ -362,7 +370,7 @@ class BackendService {
 		spreadsheet.sheetId = sheetId;
 
 		//fetch columns
-		const columnData = await this.databaseService.getSheetColumns(sheetId);
+		const columnData = await this.databaseService.GetSheetColumns(sheetId);
 		if (columnData == null) {
 			throw new Error("No Columns Found");
 		}
@@ -370,7 +378,7 @@ class BackendService {
 		spreadsheet.columns = columnData.map((col) => `C${col[0]}`);
 
 		//fetch data
-		const sheetData = await this.databaseService.getSheetData(sheetId);
+		const sheetData = await this.databaseService.GetSheetData(sheetId);
 
 		if (sheetData == null) {
 			spreadsheet.maxRows = 1;
@@ -390,7 +398,7 @@ class BackendService {
 				}
 			}
 
-			spreadsheet.insertData(
+			spreadsheet.InsertData(
 				parseInt(data[3], 10), // row_id
 				parseInt(data[2], 10), // col_id
 				data[4], // cell_value
@@ -401,15 +409,15 @@ class BackendService {
 		console.log(spreadsheet);
 	}
 
-	async #loadTableData(spreadsheet) {
-		const sheetResult = await this.databaseService.getTableNames();
+	async #LoadTableData(spreadsheet) {
+		const sheetResult = await this.databaseService.GetTableNames();
 		const sheetId = sheetResult.find((s) => s === spreadsheet.sheetName)?.[0];
 
 		if (sheetId == null) {
 			throw new Error("Table not found!!");
 		}
 
-		const tableInfo = await this.databaseService.getTableInfo(
+		const tableInfo = await this.databaseService.GetTableInfo(
 			spreadsheet.sheetName,
 		);
 
@@ -423,7 +431,7 @@ class BackendService {
 		}
 
 		//incase of db dump and schema select statement gives column and values
-		const sheetData = await this.databaseService.selectAllFromTable(
+		const sheetData = await this.databaseService.SelectAllFromTable(
 			spreadsheet.sheetName,
 		);
 		console.log("DUMP", sheetData);
@@ -451,7 +459,7 @@ class BackendService {
 							spreadsheet.primaryKeyMap.set(rowId, [cellValue]); // rowId + 1 to start from 1
 						}
 					}
-					spreadsheet.insertData(rowId, colId, cellValue, {}); // rowId + 1 to start from 1
+					spreadsheet.InsertData(rowId, colId, cellValue, {}); // rowId + 1 to start from 1
 				});
 			});
 		}
@@ -463,7 +471,7 @@ class BackendService {
 	 * @param {boolean} isInMemory - True if this is an in-memory spreadsheet, false if DB-backed.
 	 * @returns {Promise<Spreadsheet|null>} A promise that resolves to the loaded Spreadsheet instance or null.
 	 */
-	async loadSpreadsheet(spreadsheetName, isInMemory = true) {
+	async LoadSpreadsheet(spreadsheetName, isInMemory = true) {
 		if (spreadsheetName == null) {
 			return null;
 		}
@@ -473,9 +481,9 @@ class BackendService {
 
 		try {
 			if (isInMemory) {
-				await this.#loadSheetData(spreadsheet);
+				await this.#LoadSheetData(spreadsheet);
 			} else {
-				await this.#loadTableData(spreadsheet);
+				await this.#LoadTableData(spreadsheet);
 			}
 		} catch (error) {
 			console.error(error);
@@ -502,8 +510,8 @@ class BackendService {
 	 * @param {string} schemaSQL - The schema SQL as a string.
 	 * @returns {Promise<void>}
 	 */
-	async runSchema(schemaSQL) {
-		await this.databaseService.runSchema(schemaSQL);
+	async RunSchema(schemaSQL) {
+		await this.databaseService.RunSchema(schemaSQL);
 	}
 
 	/**
@@ -511,8 +519,8 @@ class BackendService {
 	 * @param {string} query - The query string.
 	 * @returns {Promise<object|null>} A promise resolving to the query result.
 	 */
-	async runQuery(query) {
-		return await this.databaseService.runQuery(query);
+	async RunQuery(query) {
+		return await this.databaseService.RunQuery(query);
 	}
 
 	/**
@@ -520,16 +528,16 @@ class BackendService {
 	 * @param {string} sheetName - The sheet name.
 	 * @returns {Promise<Array<Array<any>>>}
 	 */
-	async getForeignKeyList(sheetName) {
-		return await this.databaseService.getForeignKeyList(sheetName);
+	async GetForeignKeyList(sheetName) {
+		return await this.databaseService.GetForeignKeyList(sheetName);
 	}
 
 	/**
 	 * Exports the database as a dump.
 	 * @returns {Promise<Uint8Array>} A promise resolving to the database dump.
 	 */
-	async exportDb() {
-		return await this.databaseService.exportDb();
+	async ExportDb() {
+		return await this.databaseService.ExportDb();
 	}
 
 	//#region JSON Import/Export
@@ -627,7 +635,7 @@ class BackendService {
 
 								// Optimization: Only insert if there's actual data to save memory
 								if (cellValue !== "" && cellValue !== null) {
-									spreadsheet.insertData(targetRowId, c, cellValue, {});
+									spreadsheet.InsertData(targetRowId, c, cellValue, {});
 								}
 							}
 						}
@@ -661,11 +669,13 @@ class BackendService {
 	 */
 	HandleJsonExport(spreadsheet) {
 		let blob = null;
-		const { columnTree, columns, isInMemory } = spreadsheet;
+		const { columns, isInMemory } = spreadsheet;
 
 		try {
 			//fetch columns
-			const rowIdSet = this.#getAllModifiedRowKeys(columnTree);
+			const rowIdSet = spreadsheet.cellStore?.GetAllModifiedRowKeys
+				? spreadsheet.cellStore.GetAllModifiedRowKeys()
+				: this.#GetAllModifiedRowKeys(spreadsheet.columnTree);
 
 			const exportPayload = {
 				sheetName: spreadsheet.sheetName,
@@ -676,7 +686,7 @@ class BackendService {
 			rowIdSet.forEach((_rowId) => {
 				const rowValue = [];
 				columns.forEach((colName, colKey) => {
-					const cellData = spreadsheet.retrieveCellData(_rowId, colKey);
+					const cellData = spreadsheet.RetrieveCellData(_rowId, colKey);
 					rowValue.push(cellData?.value ?? "");
 				});
 
@@ -705,7 +715,7 @@ class BackendService {
 	async CheckDatabaseType() {
 		try {
 			const query = `SELECT count(*) as count FROM sqlite_master WHERE type='table' AND name='_sheets';`;
-			const result = await this.databaseService.runQuery(query);
+			const result = await this.databaseService.RunQuery(query);
 			debugger;
 
 			const hasArborFingerprint = result?.values[0][0] > 0;

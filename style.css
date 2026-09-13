@@ -158,6 +158,31 @@ td:first-child {
 	user-select: none;
 }
 
+/* Virtualization row heights & spacer styling */
+tbody tr:not(.virtual-spacer) {
+	height: 28px;
+	max-height: 28px;
+	min-height: 28px;
+}
+
+tbody tr:not(.virtual-spacer) td {
+	height: 28px;
+	max-height: 28px;
+}
+
+tr.virtual-spacer {
+	border: none !important;
+	padding: 0 !important;
+	margin: 0 !important;
+}
+
+tr.virtual-spacer td {
+	border: none !important;
+	padding: 0 !important;
+	margin: 0 !important;
+	background: transparent !important;
+}
+
 .input-cell {
 	width: 100%;
 	height: 100%;

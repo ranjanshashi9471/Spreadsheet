@@ -10,7 +10,7 @@ class DatabaseService {
 	 * Initializes the SQLite database and creates the necessary tables.
 	 * @returns {Promise<void>} A promise that resolves when the database is initialized.
 	 */
-	async initialize() {
+	async Initialize() {
 		if (this.db) {
 			console.warn("Database already initialized.");
 			return;
@@ -27,7 +27,7 @@ class DatabaseService {
 
 			this.db.run("PRAGMA foreign_keys = ON;");
 
-			await this.runSchema(`
+			await this.RunSchema(`
 				CREATE TABLE IF NOT EXISTS _sheets (
 					sheet_id INTEGER PRIMARY KEY AUTOINCREMENT,
 					sheet_name TEXT UNIQUE NOT NULL,
@@ -67,7 +67,7 @@ class DatabaseService {
 	 * @returns {Promise<void>}
 	 */
 	async StartTransaction() {
-		this.#ensureDbInitialized();
+		this.#EnsureDbInitialized();
 		this.db.run("BEGIN TRANSACTION;");
 	}
 
@@ -76,7 +76,7 @@ class DatabaseService {
 	 * @returns {Promise<void>}
 	 */
 	async CommitTransaction() {
-		this.#ensureDbInitialized();
+		this.#EnsureDbInitialized();
 		this.db.run("COMMIT;");
 	}
 
@@ -84,8 +84,8 @@ class DatabaseService {
 	 * Rolls back the current database transaction.
 	 * @returns {Promise<void>}
 	 */
-	async rollbackTransaction() {
-		this.#ensureDbInitialized();
+	async RollbackTransaction() {
+		this.#EnsureDbInitialized();
 		this.db.run("ROLLBACK;");
 	}
 
@@ -95,7 +95,7 @@ class DatabaseService {
 	 * @returns {Promise<void>}
 	 */
 	async LoadDump(array) {
-		this.#ensureDbInitialized();
+		this.#EnsureDbInitialized();
 		try {
 			if (this.db) {
 				this.db.close();
@@ -113,8 +113,8 @@ class DatabaseService {
 	 * Executes SQL schema content.
 	 * @param {string} schemaSql - The SQL schema content.
 	 */
-	async runSchema(schemaSql) {
-		this.#ensureDbInitialized();
+	async RunSchema(schemaSql) {
+		this.#EnsureDbInitialized();
 		try {
 			await this.db.run(schemaSql);
 			console.log("Schema loaded successfully.");
@@ -129,8 +129,8 @@ class DatabaseService {
 	 * @param {string} sheetName - The name of the sheet.
 	 * @returns {Promise<Array<any>|null>} A promise that resolves to the sheet's metadata or null.
 	 */
-	async findSheetByName(sheetName) {
-		const result = await this.runQuery(
+	async FindSheetByName(sheetName) {
+		const result = await this.RunQuery(
 			`SELECT * FROM _sheets WHERE sheet_name = ?;`,
 			[sheetName],
 		);
@@ -142,8 +142,8 @@ class DatabaseService {
 	 * @param {number} sheetId - The ID of the sheet.
 	 * @returns {Promise<Array<any>|null>} A promise that resolves to the sheet's metadata or null.
 	 */
-	async findSheetById(sheetId) {
-		const result = await this.runQuery(
+	async FindSheetById(sheetId) {
+		const result = await this.RunQuery(
 			`SELECT * FROM _sheets WHERE sheet_id = ${sheetId};`,
 		);
 		return result ? result.values[0] : null;
@@ -155,8 +155,8 @@ class DatabaseService {
 	 * @param {number} maxRow - The maximum number of rows for the sheet.
 	 * @returns {Promise<number>} A promise that resolves to the ID of the newly added sheet.
 	 */
-	async addSheet(sheetName, maxRow) {
-		this.#ensureDbInitialized();
+	async AddSheet(sheetName, maxRow) {
+		this.#EnsureDbInitialized();
 		// --- FIX: Use db.run for INSERT and get lastInsertRowId ---
 		this.db.run(`INSERT INTO _sheets (sheet_name, max_row) VALUES (?, ?);`, [
 			sheetName,
@@ -172,9 +172,9 @@ class DatabaseService {
 	 * Retrieves a list of all table names in the database.
 	 * @returns {Promise<Array<string>>} A promise that resolves to an array of table names.
 	 */
-	async getSheetNames() {
+	async GetSheetNames() {
 		try {
-			const result = await this.runQuery("SELECT sheet_name FROM _sheets;");
+			const result = await this.RunQuery("SELECT sheet_name FROM _sheets;");
 			return result ? result.values.map((row) => row[0]) : [];
 		} catch (error) {
 			console.error("Error retrieving sheet names:", error);
@@ -187,10 +187,10 @@ class DatabaseService {
 	 * @param {number} sheetId - The ID of the sheet.
 	 * @returns {Promise<void>}
 	 */
-	async setUpdatedAtTimestamp(sheetId) {
-		this.#ensureDbInitialized();
+	async SetUpdatedAtTimestamp(sheetId) {
+		this.#EnsureDbInitialized();
 		const query = `UPDATE _sheets SET updated_at = CURRENT_TIMESTAMP WHERE sheet_id = ?;`;
-		await this.runQuery(query, [sheetId]);
+		await this.RunQuery(query, [sheetId]);
 	}
 
 	/**
@@ -199,8 +199,8 @@ class DatabaseService {
 	 * @param {Array<string>} columnNames - The column names to insert.
 	 * @returns {Promise<void>}
 	 */
-	async insertColumnNames(sheetId, columnIds) {
-		this.#ensureDbInitialized();
+	async InsertColumnNames(sheetId, columnIds) {
+		this.#EnsureDbInitialized();
 		let stmt = null;
 		try {
 			stmt = this.db.prepare(
@@ -226,9 +226,9 @@ class DatabaseService {
 	 * @param {number} sheetId - The ID of the sheet.
 	 * @returns {Promise<void>}
 	 */
-	async getSheetColumns(sheetId) {
-		this.#ensureDbInitialized();
-		const result = await this.runQuery(
+	async GetSheetColumns(sheetId) {
+		this.#EnsureDbInitialized();
+		const result = await this.RunQuery(
 			`SELECT column_name FROM _sheet_columns WHERE sheet_id = ${sheetId} ORDER BY id;`,
 		);
 		return result ? result.values : null;
@@ -241,7 +241,7 @@ class DatabaseService {
 	 * @returns {Promise<void>}
 	 */
 	async InsertBulkDataForInMemory(sheetId, largeDataSet) {
-		this.#ensureDbInitialized();
+		this.#EnsureDbInitialized();
 		let stmt = null;
 		try {
 			stmt = this.db.prepare(
@@ -269,8 +269,8 @@ class DatabaseService {
 	 * @param {number} sheetId - The ID of the sheet.
 	 * @returns {Promise<void>}
 	 */
-	async getSheetData(sheetId) {
-		return await this.runQuery(
+	async GetSheetData(sheetId) {
+		return await this.RunQuery(
 			`SELECT * FROM _sheet_data WHERE sheet_id = ${sheetId} ORDER BY col_id;`,
 		);
 	}
@@ -281,8 +281,8 @@ class DatabaseService {
 	 * @param {Array<*>} [params=[]] - An optional array of parameters.
 	 * @returns {Promise<object|null>} A promise that resolves to the result object or null.
 	 */
-	async runQuery(query, params = []) {
-		this.#ensureDbInitialized();
+	async RunQuery(query, params = []) {
+		this.#EnsureDbInitialized();
 		try {
 			const results = this.db.exec(query, params);
 			console.log("Query executed successfully:", query, results);
@@ -297,9 +297,9 @@ class DatabaseService {
 	 * Exports the current database as a dump.
 	 * @returns {Promise<Uint8Array>} A promise that resolves to the database dump.
 	 */
-	async exportDb() {
+	async ExportDb() {
 		try {
-			this.#ensureDbInitialized();
+			this.#EnsureDbInitialized();
 			return this.db.export();
 		} catch (error) {
 			throw new Error("Error Exporting Db", error);
@@ -309,7 +309,7 @@ class DatabaseService {
 	/**
 	 * Closes the database connection.
 	 */
-	close() {
+	Close() {
 		if (this.db) {
 			this.db.close();
 			this.db = null;
@@ -358,9 +358,9 @@ class DatabaseService {
 	 * Retrieves a list of all sheet names in the database.
 	 * @returns {Promise<Array<string>>} A promise that resolves to an array of sheet names.
 	 */
-	async getTableNames() {
+	async GetTableNames() {
 		try {
-			const result = await this.runQuery(
+			const result = await this.RunQuery(
 				"SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('_sheet_columns', '_sheet_data', '_sheets');",
 			);
 			console.log(result);
@@ -376,8 +376,8 @@ class DatabaseService {
 	 * @param {string} tableName - The name of the table.
 	 * @returns {Promise<Array<Array<string>>>} A promise that resolves to the column info.
 	 */
-	async getTableInfo(tableName) {
-		const result = await this.runQuery(`PRAGMA table_info("${tableName}");`);
+	async GetTableInfo(tableName) {
+		const result = await this.RunQuery(`PRAGMA table_info("${tableName}");`);
 		console.log("getTableInfo result:", result);
 		return result ? result.values : [];
 	}
@@ -387,8 +387,8 @@ class DatabaseService {
 	 * @param {string} tableName - The name of the table.
 	 * @returns {Promise<object|null>} A promise that resolves to the result object or null.
 	 */
-	async selectAllFromTable(tableName) {
-		return await this.runQuery(`SELECT * FROM "${tableName}";`);
+	async SelectAllFromTable(tableName) {
+		return await this.RunQuery(`SELECT * FROM "${tableName}";`);
 	}
 
 	/**
@@ -396,8 +396,8 @@ class DatabaseService {
 	 * @param {string} tableName - The name of the table.
 	 * @returns {Promise<Array<Array<any>>>} A promise that resolves to the foreign key info.
 	 */
-	async getForeignKeyList(tableName) {
-		const result = await this.runQuery(
+	async GetForeignKeyList(tableName) {
+		const result = await this.RunQuery(
 			`PRAGMA foreign_key_list("${tableName}");`,
 		);
 		return result ? result.values : [];
@@ -408,8 +408,8 @@ class DatabaseService {
 	 * @param {string} tableName - The name of the table.
 	 * @returns {Promise<object|null>} A promise that resolves to an object with column_count and max_id.
 	 */
-	async getTableMetadata(tableName) {
-		const result = await this.runQuery(
+	async GetTableMetadata(tableName) {
+		const result = await this.RunQuery(
 			`SELECT cc.column_count, m.max_id from (SELECT MAX(c0) as max_id from "${tableName}") m, (SELECT COUNT(*) as column_count from pragma_table_info("${tableName}")) cc;`,
 		);
 		if (result && result.values.length > 0) {
@@ -421,9 +421,9 @@ class DatabaseService {
 		return null;
 	}
 
-	#ensureDbInitialized() {
+	#EnsureDbInitialized() {
 		if (!this.db) {
-			throw new Error("Database not initialized. Call initialize() first.");
+			throw new Error("Database not initialized. Call Initialize() first.");
 		}
 	}
 }

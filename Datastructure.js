@@ -39,36 +39,36 @@ class AVLTree {
 		this.root = null;
 	}
 
-	getHeight(node) {
+	GetHeight(node) {
 		return node ? node.height : 0;
 	}
 
-	getBalance(node) {
-		return node ? this.getHeight(node.left) - this.getHeight(node.right) : 0;
+	GetBalance(node) {
+		return node ? this.GetHeight(node.left) - this.GetHeight(node.right) : 0;
 	}
 
-	rotateRight(y) {
+	RotateRight(y) {
 		const x = y.left;
 		const T2 = x.right;
 
 		x.right = y;
 		y.left = T2;
 
-		y.height = Math.max(this.getHeight(y.left), this.getHeight(y.right)) + 1;
-		x.height = Math.max(this.getHeight(x.left), this.getHeight(x.right)) + 1;
+		y.height = Math.max(this.GetHeight(y.left), this.GetHeight(y.right)) + 1;
+		x.height = Math.max(this.GetHeight(x.left), this.GetHeight(x.right)) + 1;
 
 		return x;
 	}
 
-	rotateLeft(x) {
+	RotateLeft(x) {
 		const y = x.right;
 		const T2 = y.left;
 
 		y.left = x;
 		x.right = T2;
 
-		x.height = Math.max(this.getHeight(x.left), this.getHeight(x.right)) + 1;
-		y.height = Math.max(this.getHeight(y.left), this.getHeight(y.right)) + 1;
+		x.height = Math.max(this.GetHeight(x.left), this.GetHeight(x.right)) + 1;
+		y.height = Math.max(this.GetHeight(y.left), this.GetHeight(y.right)) + 1;
 
 		return y;
 	}
@@ -82,15 +82,15 @@ class AVLTree {
 	 * @param {Function} createNodeFn - The function to create a new node (e.g., ColumnNode or RowNode).
 	 * @returns {object} The root of the balanced subtree after insertion.
 	 */
-	_insert(node, key, value, style, createNodeFn) {
+	_Insert(node, key, value, style, createNodeFn) {
 		if (!node) {
 			return createNodeFn(key, value, style);
 		}
 
 		if (key < node.key) {
-			node.left = this._insert(node.left, key, value, style, createNodeFn);
+			node.left = this._Insert(node.left, key, value, style, createNodeFn);
 		} else if (key > node.key) {
-			node.right = this._insert(node.right, key, value, style, createNodeFn);
+			node.right = this._Insert(node.right, key, value, style, createNodeFn);
 		} else {
 			// If the key already exists, update its value (relevant for RowNodes)
 			if (value !== undefined) {
@@ -103,21 +103,25 @@ class AVLTree {
 		}
 
 		node.height =
-			Math.max(this.getHeight(node.left), this.getHeight(node.right)) + 1;
-		const balance = this.getBalance(node);
+			Math.max(this.GetHeight(node.left), this.GetHeight(node.right)) + 1;
+		const balance = this.GetBalance(node);
 
-		if (balance > 1 && key < node.left.key) return this.rotateRight(node);
-		if (balance < -1 && key > node.right.key) return this.rotateLeft(node);
+		if (balance > 1 && key < node.left.key) return this.RotateRight(node);
+		if (balance < -1 && key > node.right.key) return this.RotateLeft(node);
 		if (balance > 1 && key > node.left.key) {
-			node.left = this.rotateLeft(node.left);
-			return this.rotateRight(node);
+			node.left = this.RotateLeft(node.left);
+			return this.RotateRight(node);
 		}
 		if (balance < -1 && key < node.right.key) {
-			node.right = this.rotateRight(node.right);
-			return this.rotateLeft(node);
+			node.right = this.RotateRight(node.right);
+			return this.RotateLeft(node);
 		}
 
 		return node;
+	}
+
+	Insert(node, key, value, style, createNodeFn) {
+		return this._Insert(node, key, value, style, createNodeFn);
 	}
 
 	/**
@@ -125,7 +129,7 @@ class AVLTree {
 	 * @param {*} key - The key to search for.
 	 * @returns {object|null} The node if found, otherwise null.
 	 */
-	find(key) {
+	Find(key) {
 		let current = this.root;
 		while (current) {
 			if (key === current.key) {
@@ -144,31 +148,101 @@ class AVLTree {
 	 * @param {object} node - The current node in the recursive traversal.
 	 * @returns {Array} An array of nodes.
 	 */
-	_traverseInOrder(node) {
+	_TraverseInOrder(node) {
 		if (!node) return [];
 		return [
-			...this._traverseInOrder(node.left),
+			...this._TraverseInOrder(node.left),
 			node,
-			...this._traverseInOrder(node.right),
+			...this._TraverseInOrder(node.right),
 		];
+	}
+
+	TraverseInOrder(node) {
+		return this._TraverseInOrder(node);
 	}
 }
 
 /**
- * Represents a spreadsheet using an AVL tree of AVL trees.
- * This is an in-memory data structure.
+ * Represents a spreadsheet.
+ * Uses a CellStore abstraction (defaulting to AVLCellStore) for cell storage.
  */
 class Spreadsheet {
 	// Export this class
-	constructor(sheetName = "Sheet1") {
-		this.sheetName = sheetName;
-		this.sheetId = 0;
-		this.isInMemory = true;
-		this.columns = []; //if dbdump then columnames will be stored here, else columnIds
-		this.maxRows = 0;
-		this.primaryKeys = new Set(); // Kept for syncing with DB if needed
-		this.primaryKeyMap = new Map(); //used to store rowno as key and primarykey values as value
-		this.columnTree = new AVLTree();
+	constructor(sheetName = "Sheet1", cellStore = null) {
+		this.SheetName = sheetName;
+		this.SheetId = 0;
+		this.IsInMemory = true;
+		this.Columns = []; // if dbdump then columnames will be stored here, else columnIds
+		this.MaxRows = 0;
+		this.PrimaryKeys = new Set(); // Kept for syncing with DB if needed
+		this.PrimaryKeyMap = new Map(); // used to store rowno as key and primarykey values as value
+		this.CellStore =
+			cellStore ||
+			(typeof AVLCellStore !== "undefined" ? new AVLCellStore() : null);
+		this.RenderData = null;
+	}
+
+	// Backwards-compatible aliases
+	get sheetName() {
+		return this.SheetName;
+	}
+	set sheetName(val) {
+		this.SheetName = val;
+	}
+	get sheetId() {
+		return this.SheetId;
+	}
+	set sheetId(val) {
+		this.SheetId = val;
+	}
+	get isInMemory() {
+		return this.IsInMemory;
+	}
+	set isInMemory(val) {
+		this.IsInMemory = val;
+	}
+	get columns() {
+		return this.Columns;
+	}
+	set columns(val) {
+		this.Columns = val;
+	}
+	get maxRows() {
+		return this.MaxRows;
+	}
+	set maxRows(val) {
+		this.MaxRows = val;
+	}
+	get primaryKeys() {
+		return this.PrimaryKeys;
+	}
+	set primaryKeys(val) {
+		this.PrimaryKeys = val;
+	}
+	get primaryKeyMap() {
+		return this.PrimaryKeyMap;
+	}
+	set primaryKeyMap(val) {
+		this.PrimaryKeyMap = val;
+	}
+	get cellStore() {
+		return this.CellStore;
+	}
+	set cellStore(val) {
+		this.CellStore = val;
+	}
+	get renderData() {
+		return this.RenderData;
+	}
+	set renderData(val) {
+		this.RenderData = val;
+	}
+	get columnTree() {
+		return this.CellStore && this.CellStore.ColumnTree
+			? this.CellStore.ColumnTree
+			: this.CellStore?.GetRawTree
+				? this.CellStore.GetRawTree()
+				: null;
 	}
 
 	/**
@@ -177,33 +251,13 @@ class Spreadsheet {
 	 * @param {*} rowKey - The key identifying the row.
 	 * @param {*} colKey - The key identifying the column.
 	 * @param {*} cellValue - The value to store in the cell.
+	 * @param {object} [style={}] - Cell formatting/style metadata.
 	 */
-	insertData(rowKey, colKey, cellValue, style = {}) {
-		// Find or insert the column
-		let colNode = this.columnTree.find(colKey);
-		if (!colNode) {
-			this.columnTree.root = this.columnTree._insert(
-				this.columnTree.root,
-				colKey,
-				undefined,
-				undefined,
-				(key) => new ColumnNode(key),
-			);
-			colNode = this.columnTree.find(colKey); // Re-find after potential root change
+	InsertData(rowKey, colKey, cellValue, style = {}) {
+		if (!this.CellStore) {
+			this.CellStore = new AVLCellStore();
 		}
-
-		// Insert or update the row within the found/created column
-		if (!colNode.rows) {
-			colNode.rows = new AVLTree();
-		}
-
-		colNode.rows.root = colNode.rows._insert(
-			colNode.rows.root,
-			rowKey,
-			cellValue,
-			style,
-			(key, value, style) => new RowNode(key, value, style),
-		);
+		this.CellStore.SetCell(rowKey, colKey, cellValue, style);
 	}
 
 	/**
@@ -212,38 +266,16 @@ class Spreadsheet {
 	 * @param {*} colKey - The key identifying the column.
 	 * @returns {*} The cell value, or null if the cell does not exist.
 	 */
-	retrieveCellData(rowKey, colKey) {
-		const colNode = this.columnTree.find(colKey);
-		if (!colNode || !colNode.rows) {
-			return null;
-		}
-		const rowNode = colNode.rows.find(rowKey);
-		return rowNode ? { value: rowNode.value, style: rowNode.style } : null;
+	RetrieveCellData(rowKey, colKey) {
+		return this.CellStore ? this.CellStore.GetCell(rowKey, colKey) : null;
 	}
 
 	/**
 	 * Traverses all columns and their respective rows, returning a structured representation of the spreadsheet data.
 	 * @returns {Array<object>} An array of objects, each representing a column and its rows.
 	 */
-	traverseAll() {
-		const allColumns = this.columnTree._traverseInOrder(this.columnTree.root);
-		const spreadsheetData = [];
-
-		for (const colNode of allColumns) {
-			const rowsInColumn = colNode.rows
-				? colNode.rows._traverseInOrder(colNode.rows.root)
-				: [];
-			const formattedRows = rowsInColumn.map((row) => ({
-				key: row.key,
-				value: row.value,
-			}));
-			spreadsheetData.push({
-				colKey: colNode.key,
-				colName: colNode.name,
-				rows: formattedRows,
-			});
-		}
-		return spreadsheetData;
+	TraverseAll() {
+		return this.CellStore ? this.CellStore.TraverseAll() : [];
 	}
 
 	/**
@@ -251,24 +283,21 @@ class Spreadsheet {
 	 * @param {*} colKey - The key of the column to traverse.
 	 * @returns {Array<object>} An array of objects, each representing a row and its value in the specified column.
 	 */
-	traverseRowsInColumn(colKey) {
-		const colNode = this.columnTree.find(colKey);
-		if (!colNode || !colNode.rows) {
-			return [];
-		}
-		const rowsInColumn = colNode.rows._traverseInOrder(colNode.rows.root);
-		return rowsInColumn.map((row) => ({ key: row.key, value: row.value }));
+	TraverseRowsInColumn(colKey) {
+		return this.CellStore ? this.CellStore.TraverseRowsInColumn(colKey) : [];
 	}
 
 	/**
 	 * Clears all data from the in-memory spreadsheet.
 	 */
-	clear() {
-		this.columnTree.root = null;
-		this.columns = [];
-		this.maxRows = 0;
-		this.primaryKeys.clear();
-		this.primaryKeyMap.clear();
-		this.renderData = null;
+	Clear() {
+		if (this.CellStore) {
+			this.CellStore.Clear();
+		}
+		this.Columns = [];
+		this.MaxRows = 0;
+		this.PrimaryKeys.clear();
+		this.PrimaryKeyMap.clear();
+		this.RenderData = null;
 	}
 }

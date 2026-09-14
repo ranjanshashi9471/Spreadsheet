@@ -9,40 +9,50 @@ An enterprise-grade, high-performance web spreadsheet application built with van
 Arbor is engineered with clean domain boundaries, strict separation of concerns, and zero DOM dependencies across all calculation and data storage layers. Every property and method across modern classes adheres strictly to **Universal PascalCase**.
 
 ```
-                           SpreadsheetUI
-                 (Application Controller & Events)
-                    │                    │
-                    ▼                    ▼
-             SpreadsheetModel     SelectionModel
-          (Domain State & Comms) (Isolated Range State)
-            │        │     │
-            │        │     ▼
-            │        │  GridRenderer ◄── [Presentation Engine]
-            │        │     │
-            │        │     ▼
-            │        │   DOM (Grid & Cells)
-            │        │
-            │        ▼
-            │   CalculationEngine ◄── [Calculation Coordinator]
-            │   ├── FormulaParser (Ohm Grammar & CST -> AST)
-            │   ├── DependencyAnalyzer (AST -> Cell & Range Dependencies)
-            │   ├── DependencyGraph (DAG, Cycle Detection & Topological Sort)
-            │   ├── FormulaEvaluator (AST Tree-Walking Evaluator)
-            │   ├── FunctionRegistry (SUM, AVERAGE, MIN, MAX, IF, etc.)
-            │   └── ReferenceResolver (A1 <-> Coords Transformations)
-            │
-            ▼
-       Spreadsheet
-            │
-            ▼
-        CellStore (Base Contract)
-            │
-            ▼
-       AVLCellStore (Balanced BST-of-BSTs)
-            │
-            ▼
-    SpreadsheetService & DbOps (SQLite via sql.js)
+                                 SpreadsheetUI
+                       (Application Controller & Events)
+                         │              │             │
+                         ▼              │             ▼
+                   CommandManager       │       SelectionModel
+                         │              │     (Isolated Range State)
+                         ▼              ▼
+                      Commands    GridRenderer ◄── [Presentation Engine]
+                         │              ▲
+                         ▼              │ (SpreadsheetEvents: cellsChanged, sheetReset)
+                  SpreadsheetModel ─────┘
+               (Domain State & Batching)
+                   │             │
+                   │             ▼
+                   │     CalculationEngine ◄── [Pure Calculation Coordinator]
+                   │     ├── FormulaParser (Ohm Grammar & AST Builder)
+                   │     ├── DependencyAnalyzer (AST -> Cells & Ranges)
+                   │     ├── DependencyGraph (DAG, Cycle Detection & Topological Sort)
+                   │     ├── FormulaEvaluator (Tree-Walking AST Evaluator)
+                   │     ├── FunctionRegistry (SUM, AVERAGE, IF, etc.)
+                   │     └── ReferenceResolver (Coordinate Mapping)
+                   ▼
+              Spreadsheet
+                   │
+                   ▼
+               CellStore (Base Contract)
+                   │
+                   ▼
+              AVLCellStore (Balanced BST-of-BSTs)
+                   │
+                   ▼
+           SpreadsheetService & DbOps (SQLite via sql.js)
 ```
+
+### Architectural Invariants
+
+Arbor enforces two foundational architectural invariants:
+
+1. **Zero-DOM Boundary**:
+   - `SpreadsheetModel.js`, `CalculationEngine.js`, `Command.js`, `DependencyGraph.js`, `FormulaEvaluator.js`, and `CellStore.js` have **zero references** to `document`, `window.document`, `querySelector`, or `GridRenderer`.
+   - The entire core model, command stack, and calculation pipeline can execute headlessly in pure Node.js environments or Web Workers.
+2. **Single-Notification Transaction Invariant**:
+   - Every user command operation (single cell edit, multi-cell clear, undo, redo) emits **exactly one** `cellsChanged` event.
+   - The mutation delta contains the complete, deduplicated set of directly modified and downstream cascaded cells, where the latest mutation snapshot wins.
 
 ---
 
@@ -66,8 +76,10 @@ Arbor is engineered with clean domain boundaries, strict separation of concerns,
 - **Function Registry (`FunctionRegistry.js`)**:
   - Extensible registry pre-loaded with Excel-standard functions: `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, `COUNTA`, `IF`, `IFERROR`, `AND`, `OR`, `NOT`, `TRUE`, `FALSE`. Supports dynamic runtime additions.
 - **Calculation Coordinator (`CalculationEngine.js`)**:
-  - Integrates the parser, analyzer, DAG, and evaluator.
+  - Integrates the parser, analyzer, DAG, and evaluator with **zero DOM references**.
   - Maintains an internal AST cache (`FormulaCache`) to eliminate redundant re-parsing during reactive cascades.
+  - **Mutation Deltas**: `ProcessCellUpdate`, `RecalculateDependents`, `RecalculateAll`, and `ClearCells` return complete, deduplicated arrays of affected cell descriptors: `Array<{ RowKey, ColKey, Value, ComputedValue, Style }>`.
+  - **Single-Pass Batch Clearing (`ClearCells`)**: Clears multi-cell ranges, strips dependencies, and recalculates downstream dependents in a single topological pass.
   - **Dual Value Model**: Stores both the raw input/formula (`Value`) and the computed outcome (`ComputedValue`). Grid cells display `ComputedValue`, switching to raw `Value` on `focusin` for editing.
 
 ### 2. Command Pattern & Undo/Redo Engine (`Phase 4`)
@@ -76,24 +88,27 @@ Arbor is engineered with clean domain boundaries, strict separation of concerns,
   - Manages bounded `UndoStack` and `RedoStack` history.
   - Dispatches undo/redo change notifications to registered listeners.
 - **`Command.js`**:
-  - `SetCellCommand`: Encapsulates single-cell edits with previous/new value and style preservation.
-  - `ClearRangeCommand`: Captures prior cell states and clears ranges atomically.
-  - `CompoundCommand`: Batches multi-cell mutations into an atomic undoable transaction.
-  - Undo and Redo operations re-trigger the calculation engine, automatically cascading dependent formulas.
+  - **Zero View Coupling**: Commands do not manipulate DOM elements or invoke renderers.
+  - `SetCellCommand`: Encapsulates single-cell edits with prior value/style preservation, delegating strictly to `SpreadsheetModel.SetCell`.
+  - `ClearRangeCommand`: Clears multi-cell ranges via `SpreadsheetModel.ClearCells(entries)`, triggering a single recalculation pass.
+  - `CompoundCommand`: Batches arbitrary command sets into an atomic transaction.
+  - **Atomic Undo**: `ClearRangeCommand.Undo()` wraps cell restorations in `SpreadsheetModel.BatchUpdate(...)`, emitting a single `cellsChanged` event.
 
-### 3. Grid Presentation Engine (`Phase 5`)
+### 3. Event-Driven Grid Presentation Engine (`Phase 5`)
 
 - **`GridRenderer.js`**:
-  - Decoupled from application state and business logic.
-  - Generates table structure, column headers with resize handles, row headers (`C0`), and data cells.
-  - Optimized for DOM performance using `DocumentFragment` during bulk renders.
-  - Provides $O(1)$ single-cell updates (`UpdateCell`) without re-rendering the entire table.
+  - Decoupled as an event subscriber listening to `SpreadsheetModel`'s `cellsChanged` and `sheetReset` events.
+  - Performs $O(1)$ single-cell DOM updates (`UpdateCell`) in response to model mutation events without full grid re-renders.
+  - Generates table structure, column headers with resize handles, row headers (`C0`), and virtualized data cells using `DocumentFragment`.
+  - Provides clean lifecycle cleanup via `Destroy()`.
 
 ### 4. Headless Selection & Domain Models (`Phases 1 & 3`)
 
 - **`SpreadsheetModel.js`**:
-  - State owner for active sheets (`GetCurrentSpreadsheet`, `SetCurrentSpreadsheet`, `CreateBlank`, `Clear`).
-  - Coordinates commands and calculation re-evaluation on sheet load or sheet switch.
+  - State owner for active spreadsheets with zero view dependencies.
+  - **Event Bus**: Emits standardized `SpreadsheetEvents` (`cellsChanged`, `sheetReset`) via `AddListener`, `RemoveListener`, and `NotifyListeners`.
+  - **Batching Context**: Supports nested `BeginBatch()`, `EndBatch()`, and `BatchUpdate(fn)` with a `_PendingChanges` Map ensuring latest-snapshot-wins deduplication.
+  - **Explicit Recalculation**: `SetCurrentSpreadsheet` triggers `sheetReset` without implicit recalculation; `RecalculateAll()` provides explicit full-sheet evaluation.
 - **`SelectionModel.js`**:
   - Pure state engine for cell, row, column, and rectangular range selections.
   - Computes rectangular bounding boxes and selection queries with zero DOM references.
@@ -185,6 +200,7 @@ Arbor is engineered with clean domain boundaries, strict separation of concerns,
 ├── sql.js                  # Vendored SQLite WebAssembly engine
 ├── style.css               # Application stylesheet & grid theme
 └── scratch/                # Automated verification test suites
+    ├── test_decoupling.js  # Architectural boundary, Zero-DOM & Single-Notification tests
     ├── test_slice1.js      # Arithmetic Expression Engine tests
     ├── test_slice2.js      # Cell References & Coordinate Mapping tests
     ├── test_slice3.js      # Exponentiation & Unary Operator tests
@@ -214,7 +230,10 @@ No compilation, bundling, or node server is required:
 The entire calculation engine, DAG, and storage stack are verified via Node.js:
 
 ```bash
-# Run the complete Phase 7 test suite (includes regression across all 9 slices)
+# Run the Architectural Decoupling & Invariant Verification suite
+node scratch/test_decoupling.js
+
+# Run the complete Phase 7 test suite (includes regression across all slices)
 node scratch/test_slice9.js
 
 # Run individual test suites

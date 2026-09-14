@@ -15,7 +15,6 @@ class GridRenderer {
 	 */
 	constructor(containerElement, spreadsheetModel, selectionModel) {
 		this.ContainerElement = containerElement;
-		this.SpreadsheetModel = spreadsheetModel;
 		this.SelectionModel = selectionModel;
 
 		this.TableElement = null;
@@ -34,6 +33,76 @@ class GridRenderer {
 		this.TopSpacerElement = null;
 		this.BottomSpacerElement = null;
 		this.ScrollHandlerAttached = false;
+
+		// Decoupled Model Event Listener
+		this.ModelListener = (event) => this.OnModelEvent(event);
+		this._SpreadsheetModel = null;
+		this.SpreadsheetModel = spreadsheetModel;
+	}
+
+	get SpreadsheetModel() {
+		return this._SpreadsheetModel;
+	}
+
+	set SpreadsheetModel(val) {
+		if (
+			this._SpreadsheetModel &&
+			this.ModelListener &&
+			typeof this._SpreadsheetModel.RemoveListener === "function"
+		) {
+			this._SpreadsheetModel.RemoveListener(this.ModelListener);
+		}
+
+		this._SpreadsheetModel = val;
+
+		if (
+			this._SpreadsheetModel &&
+			this.ModelListener &&
+			typeof this._SpreadsheetModel.AddListener === "function"
+		) {
+			this._SpreadsheetModel.AddListener(this.ModelListener);
+		}
+	}
+
+	/**
+	 * Handles model lifecycle and mutation events.
+	 * Updates the DOM elements for affected cells or re-renders table structure on reset.
+	 * @param {{ type: string, [key: string]: any }} event
+	 */
+	OnModelEvent(event) {
+		if (!event) return;
+
+		if (event.type === "cellsChanged" && Array.isArray(event.cells)) {
+			for (const cell of event.cells) {
+				const displayValue =
+					cell.ComputedValue !== undefined && cell.ComputedValue !== null
+						? cell.ComputedValue
+						: (cell.Value ?? "");
+				this.UpdateCell(cell.RowKey, cell.ColKey, displayValue, cell.Style);
+			}
+		} else if (event.type === "sheetReset") {
+			if (this.ContainerElement && event.sheet) {
+				const sheetName = event.sheet.SheetName || event.sheet.sheetName;
+				if (sheetName) {
+					this.RenderStructure(sheetName);
+					this.RenderTableBody();
+				}
+			}
+		}
+	}
+
+	/**
+	 * Destroys the renderer instance, unregistering listeners.
+	 */
+	Destroy() {
+		if (
+			this._SpreadsheetModel &&
+			this.ModelListener &&
+			typeof this._SpreadsheetModel.RemoveListener === "function"
+		) {
+			this._SpreadsheetModel.RemoveListener(this.ModelListener);
+		}
+		this.ModelListener = null;
 	}
 
 	// Compatibility getters
@@ -42,6 +111,9 @@ class GridRenderer {
 	}
 	get spreadsheetModel() {
 		return this.SpreadsheetModel;
+	}
+	set spreadsheetModel(val) {
+		this.SpreadsheetModel = val;
 	}
 	get selectionModel() {
 		return this.SelectionModel;

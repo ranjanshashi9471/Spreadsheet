@@ -93,9 +93,7 @@ class CalculationEngine {
 			graph || (typeof CalcGraph !== "undefined" ? new CalcGraph() : null);
 		this.Resolver =
 			resolver ||
-			(typeof CalcRefResolver !== "undefined"
-				? new CalcRefResolver()
-				: null);
+			(typeof CalcRefResolver !== "undefined" ? new CalcRefResolver() : null);
 		this.FormulaCache = new Map(); // cellKey -> { AST: ASTNode, RawFormula: string }
 	}
 
@@ -152,7 +150,7 @@ class CalculationEngine {
 	 * @param {number|string} colKey - 0-based column index.
 	 * @param {*} rawValue - The raw input value (literal or formula string).
 	 * @param {object} [style={}] - Optional cell style metadata.
-	 * @returns {{ Value: *, ComputedValue: * }}
+	 * @returns {Array<{ RowKey: number, ColKey: number, Value: *, ComputedValue: *, Style: object }>}
 	 */
 	ProcessCellUpdate(model, rowKey, colKey, rawValue, style = {}) {
 		const numColKey =
@@ -160,6 +158,7 @@ class CalculationEngine {
 				? colKey
 				: this.Resolver.ToColumnIndex(String(colKey));
 		const cellKey = this.Resolver.CoordsToCellKey(rowKey, numColKey);
+		const changedMap = new Map();
 
 		// Case 1: Non-formula literal value
 		if (!this.IsFormula(rawValue)) {
@@ -175,9 +174,21 @@ class CalculationEngine {
 				style,
 				computedValue,
 			);
-			this.RecalculateDependents(model, cellKey);
+			changedMap.set(cellKey, {
+				RowKey: rowKey,
+				ColKey: numColKey,
+				Value: rawValue,
+				ComputedValue: computedValue,
+				Style: style,
+			});
 
-			return { Value: rawValue, ComputedValue: computedValue };
+			const depChanges = this.RecalculateDependents(model, cellKey);
+			for (const c of depChanges) {
+				const k = this.Resolver.CoordsToCellKey(c.RowKey, c.ColKey);
+				changedMap.set(k, c);
+			}
+
+			return Array.from(changedMap.values());
 		}
 
 		// Case 2: Formula string
@@ -204,9 +215,21 @@ class CalculationEngine {
 				style,
 				computedValue,
 			);
-			this.RecalculateDependents(model, cellKey);
+			changedMap.set(cellKey, {
+				RowKey: rowKey,
+				ColKey: numColKey,
+				Value: rawValue,
+				ComputedValue: computedValue,
+				Style: style,
+			});
 
-			return { Value: rawValue, ComputedValue: computedValue };
+			const depChanges = this.RecalculateDependents(model, cellKey);
+			for (const c of depChanges) {
+				const k = this.Resolver.CoordsToCellKey(c.RowKey, c.ColKey);
+				changedMap.set(k, c);
+			}
+
+			return Array.from(changedMap.values());
 		}
 
 		// Analyze dependencies
@@ -228,9 +251,21 @@ class CalculationEngine {
 				style,
 				computedValue,
 			);
-			this.RecalculateDependents(model, cellKey);
+			changedMap.set(cellKey, {
+				RowKey: rowKey,
+				ColKey: numColKey,
+				Value: rawValue,
+				ComputedValue: computedValue,
+				Style: style,
+			});
 
-			return { Value: rawValue, ComputedValue: computedValue };
+			const depChanges = this.RecalculateDependents(model, cellKey);
+			for (const c of depChanges) {
+				const k = this.Resolver.CoordsToCellKey(c.RowKey, c.ColKey);
+				changedMap.set(k, c);
+			}
+
+			return Array.from(changedMap.values());
 		}
 
 		// No cycle: register dependencies and cache AST
@@ -258,27 +293,40 @@ class CalculationEngine {
 			style,
 			computedValue,
 		);
+		changedMap.set(cellKey, {
+			RowKey: rowKey,
+			ColKey: numColKey,
+			Value: rawValue,
+			ComputedValue: computedValue,
+			Style: style,
+		});
 
 		// Recalculate downstream dependent cells
-		this.RecalculateDependents(model, cellKey);
+		const depChanges = this.RecalculateDependents(model, cellKey);
+		for (const c of depChanges) {
+			const k = this.Resolver.CoordsToCellKey(c.RowKey, c.ColKey);
+			changedMap.set(k, c);
+		}
 
-		return { Value: rawValue, ComputedValue: computedValue };
+		return Array.from(changedMap.values());
 	}
 
 	/**
 	 * Recalculates all downstream dependent cells in topological order.
 	 * @param {SpreadsheetModel|object} model - The active spreadsheet model.
 	 * @param {string|string[]} changedCellKeys - One or more cell keys that changed.
+	 * @returns {Array<{ RowKey: number, ColKey: number, Value: *, ComputedValue: *, Style: object }>}
 	 */
 	RecalculateDependents(model, changedCellKeys) {
 		if (!this.Graph || !this.Evaluator) {
-			return;
+			return [];
 		}
 
 		const keys = Array.isArray(changedCellKeys)
 			? changedCellKeys
 			: [changedCellKeys];
 		const recalcResult = this.Graph.GetRecalculationOrder(keys);
+		const changedMap = new Map();
 
 		// Flag any circular cells detected downstream
 		if (recalcResult.HasCycle && recalcResult.CircularCells) {
@@ -298,13 +346,13 @@ class CalculationEngine {
 					style,
 					"#CIRCULAR!",
 				);
-				this.#UpdateDOMCell(
-					model,
-					coords.RowKey,
-					coords.ColKey,
-					"#CIRCULAR!",
-					style,
-				);
+				changedMap.set(circKey, {
+					RowKey: coords.RowKey,
+					ColKey: coords.ColKey,
+					Value: raw,
+					ComputedValue: "#CIRCULAR!",
+					Style: style,
+				});
 			}
 		}
 
@@ -353,35 +401,86 @@ class CalculationEngine {
 				style,
 				newComputedValue,
 			);
-			this.#UpdateDOMCell(
-				model,
-				coords.RowKey,
-				coords.ColKey,
-				newComputedValue,
-				style,
-			);
+			changedMap.set(depKey, {
+				RowKey: coords.RowKey,
+				ColKey: coords.ColKey,
+				Value: rawFormula,
+				ComputedValue: newComputedValue,
+				Style: style,
+			});
 		}
+
+		return Array.from(changedMap.values());
+	}
+
+	/**
+	 * Clears a batch of cells, updates storage, removes dependencies, and runs a single
+	 * downstream recalculation pass across all affected dependents.
+	 * @param {SpreadsheetModel|object} model - The active spreadsheet model.
+	 * @param {Array<{ RowKey: number, ColKey: number|string, OldStyle?: object, Style?: object }>} entries
+	 * @returns {Array<{ RowKey: number, ColKey: number, Value: *, ComputedValue: *, Style: object }>}
+	 */
+	ClearCells(model, entries) {
+		if (!model || !entries || entries.length === 0) return [];
+		const clearedKeys = [];
+		const changedMap = new Map();
+
+		for (const entry of entries) {
+			const rowKey = entry.RowKey !== undefined ? entry.RowKey : entry.rowKey;
+			const colKey = entry.ColKey !== undefined ? entry.ColKey : entry.colKey;
+			const numColKey =
+				typeof colKey === "number"
+					? colKey
+					: this.Resolver.ToColumnIndex(String(colKey));
+			const cellKey = this.Resolver.CoordsToCellKey(rowKey, numColKey);
+			clearedKeys.push(cellKey);
+
+			this.Graph?.RemoveDependencies(cellKey);
+			this.FormulaCache.delete(cellKey);
+
+			const style =
+				entry.OldStyle || entry.oldStyle || entry.Style || entry.style || {};
+			this.#CommitCellToStore(model, rowKey, numColKey, "", style, "");
+			changedMap.set(cellKey, {
+				RowKey: rowKey,
+				ColKey: numColKey,
+				Value: "",
+				ComputedValue: "",
+				Style: style,
+			});
+		}
+
+		const depChanges = this.RecalculateDependents(model, clearedKeys);
+		for (const c of depChanges) {
+			const k = this.Resolver.CoordsToCellKey(c.RowKey, c.ColKey);
+			changedMap.set(k, c);
+		}
+
+		return Array.from(changedMap.values());
 	}
 
 	/**
 	 * Scans the entire spreadsheet, discovers all formula cells, constructs the DAG,
 	 * and re-evaluates all formulas in topological order.
 	 * @param {SpreadsheetModel|object} model - The active spreadsheet model.
+	 * @returns {Array<{ RowKey: number, ColKey: number, Value: *, ComputedValue: *, Style: object }>}
 	 */
 	RecalculateAll(model) {
-		if (!model) return;
+		if (!model) return [];
 
 		this.Clear();
 
 		const spreadsheet = model.CurrentSpreadsheet || model;
 		if (!spreadsheet || typeof spreadsheet.TraverseAll !== "function") {
-			return;
+			return [];
 		}
 
 		const data = spreadsheet.TraverseAll();
 		if (!Array.isArray(data) || data.length === 0) {
-			return;
+			return [];
 		}
+
+		const changedMap = new Map();
 
 		// 1. First pass: Register all formula cells in the DAG and cache their ASTs
 		for (const col of data) {
@@ -401,14 +500,22 @@ class CalculationEngine {
 					const astNode = this.Parser ? this.Parser.Parse(rawFormula) : null;
 
 					if (!astNode || astNode instanceof CalcErrorNode) {
+						const errVal = astNode?.ErrorMessage || "#ERROR!";
 						this.#CommitCellToStore(
 							model,
 							rowKey,
 							numColKey,
 							rawFormula,
 							row.style || {},
-							astNode?.ErrorMessage || "#ERROR!",
+							errVal,
 						);
+						changedMap.set(cellKey, {
+							RowKey: rowKey,
+							ColKey: numColKey,
+							Value: rawFormula,
+							ComputedValue: errVal,
+							Style: row.style || {},
+						});
 					} else {
 						const { Cells, Ranges } = this.Analyzer
 							? this.Analyzer.Analyze(astNode)
@@ -426,6 +533,13 @@ class CalculationEngine {
 								row.style || {},
 								"#CIRCULAR!",
 							);
+							changedMap.set(cellKey, {
+								RowKey: rowKey,
+								ColKey: numColKey,
+								Value: rawFormula,
+								ComputedValue: "#CIRCULAR!",
+								Style: row.style || {},
+							});
 						} else {
 							if (this.Graph) {
 								this.Graph.SetDependencies(cellKey, Cells, Ranges);
@@ -463,13 +577,13 @@ class CalculationEngine {
 					style,
 					"#CIRCULAR!",
 				);
-				this.#UpdateDOMCell(
-					model,
-					coords.RowKey,
-					coords.ColKey,
-					"#CIRCULAR!",
-					style,
-				);
+				changedMap.set(circKey, {
+					RowKey: coords.RowKey,
+					ColKey: coords.ColKey,
+					Value: raw,
+					ComputedValue: "#CIRCULAR!",
+					Style: style,
+				});
 			}
 		}
 
@@ -503,14 +617,16 @@ class CalculationEngine {
 				style,
 				computedValue,
 			);
-			this.#UpdateDOMCell(
-				model,
-				coords.RowKey,
-				coords.ColKey,
-				computedValue,
-				style,
-			);
+			changedMap.set(cellKey, {
+				RowKey: coords.RowKey,
+				ColKey: coords.ColKey,
+				Value: cached.RawFormula,
+				ComputedValue: computedValue,
+				Style: style,
+			});
 		}
+
+		return Array.from(changedMap.values());
 	}
 
 	/**
@@ -536,19 +652,6 @@ class CalculationEngine {
 			targetStore.SetCell(rowKey, colKey, value, style, computedValue);
 		}
 	}
-
-	/**
-	 * Updates the DOM element for a cell if GridRenderer is attached.
-	 * @private
-	 */
-	#UpdateDOMCell(model, rowKey, colKey, computedValue, style) {
-		if (
-			model?.GridRenderer &&
-			typeof model.GridRenderer.UpdateCell === "function"
-		) {
-			model.GridRenderer.UpdateCell(rowKey, colKey, computedValue, style);
-		}
-	}
 }
 
 // Universal module export (Browser global & Node.js CommonJS)
@@ -557,4 +660,3 @@ if (typeof module !== "undefined" && module.exports) {
 		CalculationEngine,
 	};
 }
-

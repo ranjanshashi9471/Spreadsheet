@@ -16,9 +16,6 @@ class SpreadsheetUI {
 			typeof GridRenderer !== "undefined"
 				? new GridRenderer(null, this.SpreadsheetModel, this.SelectionModel)
 				: null;
-		if (this.GridRenderer) {
-			this.SpreadsheetModel.GridRenderer = this.GridRenderer;
-		}
 	}
 
 	get rootElement() {
@@ -649,6 +646,7 @@ class SpreadsheetUI {
 				isInMemory,
 			);
 			this.spreadsheetModel.SetCurrentSpreadsheet(spreadsheet);
+			this.spreadsheetModel.RecalculateAll();
 
 			if (this.currentSpreadsheet) {
 				// 2. Render

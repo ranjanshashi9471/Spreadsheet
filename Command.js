@@ -76,7 +76,7 @@ class SetCellCommand extends Command {
 	}
 
 	/**
-	 * Executes the cell update and updates DOM if mounted.
+	 * Executes the cell update on the SpreadsheetModel.
 	 */
 	Execute() {
 		if (!this.SpreadsheetModel) return;
@@ -85,10 +85,13 @@ class SetCellCommand extends Command {
 		if (this.OldValue === undefined || this.OldStyle === undefined) {
 			const prevCell = this.SpreadsheetModel.GetCell(this.RowKey, this.ColKey);
 			if (this.OldValue === undefined) {
-				this.OldValue = prevCell ? prevCell.value : "";
+				this.OldValue = prevCell
+					? (prevCell.Value ?? prevCell.value ?? "")
+					: "";
 			}
 			if (this.OldStyle === undefined) {
-				this.OldStyle = prevCell && prevCell.style ? { ...prevCell.style } : {};
+				const prevStyle = prevCell ? (prevCell.Style ?? prevCell.style) : null;
+				this.OldStyle = prevStyle ? { ...prevStyle } : {};
 			}
 		}
 
@@ -109,8 +112,6 @@ class SetCellCommand extends Command {
 			valueToSet,
 			styleToSet,
 		);
-
-		this.UpdateDOM(valueToSet, styleToSet);
 	}
 
 	/**
@@ -125,8 +126,6 @@ class SetCellCommand extends Command {
 			this.OldValue,
 			this.OldStyle || {},
 		);
-
-		this.UpdateDOM(this.OldValue, this.OldStyle);
 	}
 
 	/**
@@ -134,68 +133,6 @@ class SetCellCommand extends Command {
 	 */
 	Redo() {
 		this.Execute();
-	}
-
-	/**
-	 * Updates the DOM input and table cell if present in current document.
-	 * @param {*} value
-	 * @param {object|null} style
-	 */
-	UpdateDOM(value, style) {
-		if (
-			typeof document === "undefined" ||
-			typeof document.querySelector !== "function"
-		)
-			return;
-
-		const cell = this.SpreadsheetModel?.GetCell(this.RowKey, this.ColKey);
-		const displayValue =
-			cell && cell.ComputedValue !== undefined && cell.ComputedValue !== null
-				? cell.ComputedValue
-				: (value ?? "");
-
-		if (
-			this.SpreadsheetModel?.GridRenderer &&
-			typeof this.SpreadsheetModel.GridRenderer.UpdateCell === "function"
-		) {
-			this.SpreadsheetModel.GridRenderer.UpdateCell(
-				this.RowKey,
-				this.ColKey,
-				displayValue,
-				style,
-			);
-			return;
-		}
-
-		const currentSheet = this.SpreadsheetModel?.CurrentSpreadsheet;
-		if (!currentSheet) return;
-
-		const columns = currentSheet.Columns || currentSheet.columns || [];
-		const colIdx =
-			typeof this.ColKey === "number"
-				? this.ColKey
-				: columns.indexOf(this.ColKey);
-
-		if (displayValue !== undefined) {
-			const input = document.querySelector(
-				`input[data-rowno="${this.RowKey}"][data-colno="${colIdx}"]`,
-			);
-			if (input) {
-				input.value = displayValue ?? "";
-			}
-		}
-
-		if (style !== undefined) {
-			const td = document.querySelector(
-				`tr[data-rowno="${this.RowKey}"] td[data-colno="${colIdx}"]`,
-			);
-			if (td) {
-				td.style.backgroundColor = style?.backgroundColor || "";
-				if (style) {
-					Object.assign(td.style, style);
-				}
-			}
-		}
 	}
 }
 
@@ -225,46 +162,36 @@ class ClearRangeCommand extends Command {
 			if (entry.OldValue === undefined || entry.OldStyle === undefined) {
 				const prev = this.SpreadsheetModel.GetCell(entry.RowKey, entry.ColKey);
 				if (entry.OldValue === undefined) {
-					entry.OldValue = prev ? prev.value : "";
+					entry.OldValue = prev ? (prev.Value ?? prev.value ?? "") : "";
 				}
 				if (entry.OldStyle === undefined) {
-					entry.OldStyle = prev && prev.style ? { ...prev.style } : {};
+					const prevStyle = prev ? (prev.Style ?? prev.style) : null;
+					entry.OldStyle = prevStyle ? { ...prevStyle } : {};
 				}
 			}
-
-			this.SpreadsheetModel.SetCell(
-				entry.RowKey,
-				entry.ColKey,
-				"",
-				entry.OldStyle || {},
-			);
-
-			this.UpdateDOM(entry.RowKey, entry.ColKey, "");
 		}
+
+		this.SpreadsheetModel.ClearCells(this.CellEntries);
 	}
 
 	/**
 	 * Restores every cleared cell to its previous value and style.
+	 * Executes within a batch context to emit a single notification transaction.
 	 */
 	Undo() {
 		if (!this.SpreadsheetModel) return;
 
-		for (let i = 0; i < this.CellEntries.length; i++) {
-			const entry = this.CellEntries[i];
-			this.SpreadsheetModel.SetCell(
-				entry.RowKey,
-				entry.ColKey,
-				entry.OldValue,
-				entry.OldStyle || {},
-			);
-
-			this.UpdateDOM(
-				entry.RowKey,
-				entry.ColKey,
-				entry.OldValue,
-				entry.OldStyle,
-			);
-		}
+		this.SpreadsheetModel.BatchUpdate(() => {
+			for (let i = 0; i < this.CellEntries.length; i++) {
+				const entry = this.CellEntries[i];
+				this.SpreadsheetModel.SetCell(
+					entry.RowKey,
+					entry.ColKey,
+					entry.OldValue,
+					entry.OldStyle || {},
+				);
+			}
+		});
 	}
 
 	/**
@@ -272,68 +199,6 @@ class ClearRangeCommand extends Command {
 	 */
 	Redo() {
 		this.Execute();
-	}
-
-	/**
-	 * Updates the DOM input and cell if present.
-	 * @param {number} rowKey
-	 * @param {number|string} colKey
-	 * @param {*} value
-	 * @param {object} [style]
-	 */
-	UpdateDOM(rowKey, colKey, value, style) {
-		if (
-			typeof document === "undefined" ||
-			typeof document.querySelector !== "function"
-		)
-			return;
-
-		const cell = this.SpreadsheetModel?.GetCell(rowKey, colKey);
-		const displayValue =
-			cell && cell.ComputedValue !== undefined && cell.ComputedValue !== null
-				? cell.ComputedValue
-				: (value ?? "");
-
-		if (
-			this.SpreadsheetModel?.GridRenderer &&
-			typeof this.SpreadsheetModel.GridRenderer.UpdateCell === "function"
-		) {
-			this.SpreadsheetModel.GridRenderer.UpdateCell(
-				rowKey,
-				colKey,
-				displayValue,
-				style,
-			);
-			return;
-		}
-
-		const currentSheet = this.SpreadsheetModel?.CurrentSpreadsheet;
-		if (!currentSheet) return;
-
-		const columns = currentSheet.Columns || currentSheet.columns || [];
-		const colIdx =
-			typeof colKey === "number" ? colKey : columns.indexOf(colKey);
-
-		if (displayValue !== undefined) {
-			const input = document.querySelector(
-				`input[data-rowno="${rowKey}"][data-colno="${colIdx}"]`,
-			);
-			if (input) {
-				input.value = displayValue ?? "";
-			}
-		}
-
-		if (style !== undefined) {
-			const td = document.querySelector(
-				`tr[data-rowno="${rowKey}"] td[data-colno="${colIdx}"]`,
-			);
-			if (td) {
-				td.style.backgroundColor = style?.backgroundColor || "";
-				if (style) {
-					Object.assign(td.style, style);
-				}
-			}
-		}
 	}
 }
 

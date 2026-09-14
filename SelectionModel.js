@@ -323,3 +323,14 @@ class SelectionModel {
 		};
 	}
 }
+
+// Browser & Node module export
+if (typeof window !== "undefined") {
+	window.SelectionModel = SelectionModel;
+}
+
+if (typeof module !== "undefined" && module.exports) {
+	module.exports = {
+		SelectionModel,
+	};
+}

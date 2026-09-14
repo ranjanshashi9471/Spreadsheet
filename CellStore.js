@@ -1,5 +1,32 @@
 // CellStore.js
 
+const StoreAVLTree =
+	typeof AVLTree !== "undefined"
+		? AVLTree
+		: typeof globalThis !== "undefined" && globalThis.AVLTree
+			? globalThis.AVLTree
+			: typeof require !== "undefined"
+				? require("./Datastructure.js").AVLTree
+				: null;
+
+const StoreColumnNode =
+	typeof ColumnNode !== "undefined"
+		? ColumnNode
+		: typeof globalThis !== "undefined" && globalThis.ColumnNode
+			? globalThis.ColumnNode
+			: typeof require !== "undefined"
+				? require("./Datastructure.js").ColumnNode
+				: null;
+
+const StoreRowNode =
+	typeof RowNode !== "undefined"
+		? RowNode
+		: typeof globalThis !== "undefined" && globalThis.RowNode
+			? globalThis.RowNode
+			: typeof require !== "undefined"
+				? require("./Datastructure.js").RowNode
+				: null;
+
 /**
  * Abstract base contract for spreadsheet cell storage.
  * Defines the standard interface for cell retrieval, mutations, and traversals.
@@ -11,8 +38,9 @@ class CellStore {
 	 * @param {number|string} colKey
 	 * @param {*} value
 	 * @param {object} [style={}]
+	 * @param {*} [computedValue=undefined]
 	 */
-	SetCell(rowKey, colKey, value, style = {}) {
+	SetCell(rowKey, colKey, value, style = {}, computedValue = undefined) {
 		throw new Error("CellStore.SetCell() must be implemented by subclass.");
 	}
 
@@ -20,10 +48,24 @@ class CellStore {
 	 * Retrieves cell data at (rowKey, colKey).
 	 * @param {number|string} rowKey
 	 * @param {number|string} colKey
-	 * @returns {{ value: *, style: object } | null}
+	 * @returns {{ Value: *, value: *, Style: object, style: object, ComputedValue: *, computedValue: * } | null}
 	 */
 	GetCell(rowKey, colKey) {
 		throw new Error("CellStore.GetCell() must be implemented by subclass.");
+	}
+
+	/**
+	 * Retrieves the computed value of a cell, falling back to raw value, or 0.
+	 * @param {number|string} rowKey
+	 * @param {number|string} colKey
+	 * @returns {*}
+	 */
+	GetCellValue(rowKey, colKey) {
+		const cell = this.GetCell(rowKey, colKey);
+		if (!cell) return 0;
+		return cell.ComputedValue !== undefined && cell.ComputedValue !== null
+			? cell.ComputedValue
+			: (cell.Value ?? cell.value ?? 0);
 	}
 
 	/**
@@ -98,7 +140,13 @@ class CellStore {
 class AVLCellStore extends CellStore {
 	constructor() {
 		super();
-		this.ColumnTree = new AVLTree();
+		const TreeClass =
+			typeof StoreAVLTree === "function"
+				? StoreAVLTree
+				: typeof AVLTree === "function"
+					? AVLTree
+					: null;
+		this.ColumnTree = TreeClass ? new TreeClass() : null;
 	}
 
 	get columnTree() {
@@ -112,7 +160,30 @@ class AVLCellStore extends CellStore {
 		return this.ColumnTree;
 	}
 
-	SetCell(rowKey, colKey, value, style = {}) {
+	SetCell(rowKey, colKey, value, style = {}, computedValue = undefined) {
+		const TreeClass =
+			typeof StoreAVLTree === "function"
+				? StoreAVLTree
+				: typeof AVLTree === "function"
+					? AVLTree
+					: null;
+		const ColNodeClass =
+			typeof StoreColumnNode === "function"
+				? StoreColumnNode
+				: typeof ColumnNode === "function"
+					? ColumnNode
+					: null;
+		const RowNodeClass =
+			typeof StoreRowNode === "function"
+				? StoreRowNode
+				: typeof RowNode === "function"
+					? RowNode
+					: null;
+
+		if (!this.ColumnTree && TreeClass) {
+			this.ColumnTree = new TreeClass();
+		}
+
 		let colNode = this.ColumnTree.Find(colKey);
 		if (!colNode) {
 			this.ColumnTree.root = this.ColumnTree._Insert(
@@ -120,13 +191,14 @@ class AVLCellStore extends CellStore {
 				colKey,
 				undefined,
 				undefined,
-				(key) => new ColumnNode(key),
+				undefined,
+				(key) => (ColNodeClass ? new ColNodeClass(key) : { key }),
 			);
 			colNode = this.ColumnTree.Find(colKey);
 		}
 
-		if (!colNode.rows) {
-			colNode.rows = new AVLTree();
+		if (!colNode.rows && TreeClass) {
+			colNode.rows = new TreeClass();
 		}
 
 		colNode.rows.root = colNode.rows._Insert(
@@ -134,7 +206,11 @@ class AVLCellStore extends CellStore {
 			rowKey,
 			value,
 			style,
-			(key, val, stl) => new RowNode(key, val, stl),
+			computedValue,
+			(key, val, stl, comp) =>
+				RowNodeClass
+					? new RowNodeClass(key, val, stl, comp)
+					: { key, value: val, style: stl, computedValue: comp },
 		);
 	}
 
@@ -144,7 +220,15 @@ class AVLCellStore extends CellStore {
 			return null;
 		}
 		const rowNode = colNode.rows.Find(rowKey);
-		return rowNode ? { value: rowNode.value, style: rowNode.style } : null;
+		if (!rowNode) return null;
+		return {
+			Value: rowNode.value,
+			value: rowNode.value,
+			Style: rowNode.style,
+			style: rowNode.style,
+			ComputedValue: rowNode.computedValue,
+			computedValue: rowNode.computedValue,
+		};
 	}
 
 	HasCell(rowKey, colKey) {
@@ -169,8 +253,13 @@ class AVLCellStore extends CellStore {
 				: [];
 			const formattedRows = rowsInColumn.map((row) => ({
 				key: row.key,
+				Key: row.key,
 				value: row.value,
+				Value: row.value,
 				style: row.style,
+				Style: row.style,
+				computedValue: row.computedValue,
+				ComputedValue: row.computedValue,
 			}));
 			spreadsheetData.push({
 				colKey: colNode.key,
@@ -189,8 +278,13 @@ class AVLCellStore extends CellStore {
 		const rowsInColumn = colNode.rows._TraverseInOrder(colNode.rows.root);
 		return rowsInColumn.map((row) => ({
 			key: row.key,
+			Key: row.key,
 			value: row.value,
+			Value: row.value,
 			style: row.style,
+			Style: row.style,
+			computedValue: row.computedValue,
+			ComputedValue: row.computedValue,
 		}));
 	}
 
@@ -223,7 +317,10 @@ class AVLCellStore extends CellStore {
 					const entry = {
 						col_id: colId,
 						row_id: rowNode.key,
-						cell_value: rowNode.value,
+						cell_value:
+							rowNode.value !== undefined && rowNode.value !== null
+								? rowNode.value
+								: "",
 						cell_style: JSON.stringify(rowNode.style || {}),
 					};
 					if (sheetId !== null) {
@@ -235,4 +332,12 @@ class AVLCellStore extends CellStore {
 		}
 		return dataRows;
 	}
+}
+
+// Universal module export (Browser global & Node.js CommonJS)
+if (typeof module !== "undefined" && module.exports) {
+	module.exports = {
+		CellStore,
+		AVLCellStore,
+	};
 }

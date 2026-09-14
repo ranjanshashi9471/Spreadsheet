@@ -608,7 +608,14 @@ class GridRenderer {
 			? this.SpreadsheetModel.GetCell(rowno, colKey)
 			: null;
 		input.value =
-			cellVal == null || cellVal.value === undefined ? "" : cellVal.value;
+			cellVal == null
+				? ""
+				: cellVal.computedValue !== undefined && cellVal.computedValue !== null
+					? cellVal.computedValue
+					: cellVal.ComputedValue !== undefined &&
+						  cellVal.ComputedValue !== null
+						? cellVal.ComputedValue
+						: (cellVal.value ?? cellVal.Value ?? "");
 
 		const cellStyle = cellVal == null ? null : cellVal.style;
 		if (cellStyle && typeof cellStyle === "object") {

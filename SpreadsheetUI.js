@@ -742,10 +742,33 @@ class SpreadsheetUI {
 		if (!tbody || tbody._listenersAttached) return;
 		tbody._listenersAttached = true;
 
-		// 1. Master Focusin Listener (Caches original value before edit)
+		// 1. Master Focusin Listener (Displays raw formula/value for editing and caches original value)
 		tbody.addEventListener("focusin", (e) => {
 			if (e.target.classList.contains("input-cell")) {
-				e.target.dataset.originalValue = e.target.value;
+				const rowno = parseInt(e.target.dataset.rowno, 10);
+				const colno = parseInt(e.target.dataset.colno, 10);
+				const cell = this.SpreadsheetModel?.GetCell(rowno, colno);
+				const rawValue = cell ? (cell.Value ?? cell.value ?? "") : "";
+				e.target.value = rawValue;
+				e.target.dataset.originalValue = rawValue;
+			}
+		});
+
+		// 1b. Master Focusout Listener (Displays computedValue when editing ends)
+		tbody.addEventListener("focusout", (e) => {
+			if (e.target.classList.contains("input-cell")) {
+				const rowno = parseInt(e.target.dataset.rowno, 10);
+				const colno = parseInt(e.target.dataset.colno, 10);
+				const cell = this.SpreadsheetModel?.GetCell(rowno, colno);
+				if (cell) {
+					const displayVal =
+						cell.ComputedValue !== undefined && cell.ComputedValue !== null
+							? cell.ComputedValue
+							: cell.computedValue !== undefined && cell.computedValue !== null
+								? cell.computedValue
+								: (cell.Value ?? cell.value ?? "");
+					e.target.value = displayVal;
+				}
 			}
 		});
 
@@ -1142,7 +1165,10 @@ class SpreadsheetUI {
 
 			if (isInMemory) {
 				this.currentSpreadsheet.columns = this.currentSpreadsheet.columns.map(
-					(col) => this.#ToColumnIndex(col),
+					(col) =>
+						typeof col === "string" && col.startsWith("C")
+							? this.#ToColumnIndex(col)
+							: col,
 				);
 			}
 
@@ -1570,6 +1596,26 @@ class SpreadsheetUI {
 				// Clear selection when moving focus normally to behave like Excel
 				this.#ClearSelection();
 				this.#UpdateHighlights();
+			}
+		}
+		// 5. Handle Enter (Commit and move to next row)
+		else if (e.key === "Enter") {
+			e.preventDefault();
+			const targetRow = Math.min(this.currentSpreadsheet.maxRows, rowIdx + 1);
+			if (
+				this.GridRenderer &&
+				(targetRow < this.GridRenderer.StartRow ||
+					targetRow > this.GridRenderer.EndRow)
+			) {
+				this.GridRenderer.ScrollToRow(targetRow);
+			}
+			const nextInput = getCellInput(targetRow, colIdx);
+			if (nextInput) {
+				nextInput.focus();
+				this.#ClearSelection();
+				this.#UpdateHighlights();
+			} else {
+				focused.blur();
 			}
 		}
 	}

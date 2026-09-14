@@ -299,14 +299,29 @@ class BackendService {
 					console.log("Using existing table with ID:", sheetId);
 				}
 
-				const largeDataSet = inMemorySpreadsheet.cellStore?.ToDataArray
-					? inMemorySpreadsheet.cellStore.ToDataArray()
+				const rawDataSet = inMemorySpreadsheet.cellStore?.ToDataArray
+					? inMemorySpreadsheet.cellStore.ToDataArray(sheetId)
 					: this.#ConvertTreeToDataArray(inMemorySpreadsheet.columnTree);
+
+				const sanitizedDataSet = rawDataSet.map((row) => ({
+					col_id:
+						row.col_id !== undefined && row.col_id !== null ? row.col_id : 0,
+					row_id:
+						row.row_id !== undefined && row.row_id !== null ? row.row_id : 0,
+					cell_value:
+						row.cell_value !== undefined && row.cell_value !== null
+							? String(row.cell_value)
+							: "",
+					cell_style:
+						row.cell_style !== undefined && row.cell_style !== null
+							? row.cell_style
+							: "{}",
+				}));
 
 				// Await the bulk insert call
 				await this.databaseService.InsertBulkDataForInMemory(
 					sheetId,
-					largeDataSet,
+					sanitizedDataSet,
 				);
 				await this.databaseService.CommitTransaction();
 
@@ -333,6 +348,9 @@ class BackendService {
 			const targetColumns = spreadsheet.columns; // Raw column names from the external table
 
 			const dataRows = this.#GetDataArrayFromSparseTree(spreadsheet);
+			const sanitizedDataRows = dataRows.map((row) =>
+				row.map((val) => (val !== undefined ? val : null)),
+			);
 
 			// Mode 2: External Schema (Saving back to the raw user table)
 			await this.databaseService.StartTransaction();
@@ -340,7 +358,7 @@ class BackendService {
 			await this.databaseService.InsertReplaceBulkDataForNotInMemory(
 				spreadsheet.sheetName,
 				targetColumns,
-				dataRows,
+				sanitizedDataRows,
 			);
 
 			await this.databaseService.CommitTransaction();
@@ -727,4 +745,8 @@ class BackendService {
 			throw error;
 		}
 	}
+}
+
+if (typeof module !== "undefined" && module.exports) {
+	module.exports = { BackendService };
 }

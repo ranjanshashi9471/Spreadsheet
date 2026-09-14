@@ -1,17 +1,41 @@
-// Spreadsheet.js
-
 /**
  * Represents a node in the secondary AVL tree (for rows within a column).
  * Stores the row key and its corresponding cell value.
  */
 class RowNode {
-	constructor(rowKey, cellValue, style) {
+	constructor(rowKey, cellValue, style, computedValue = undefined) {
 		this.key = rowKey;
 		this.value = cellValue;
 		this.style = style;
+		this.computedValue = computedValue;
 		this.left = null;
 		this.right = null;
 		this.height = 1;
+	}
+
+	get Key() {
+		return this.key;
+	}
+	set Key(val) {
+		this.key = val;
+	}
+	get Value() {
+		return this.value;
+	}
+	set Value(val) {
+		this.value = val;
+	}
+	get Style() {
+		return this.style;
+	}
+	set Style(val) {
+		this.style = val;
+	}
+	get ComputedValue() {
+		return this.computedValue;
+	}
+	set ComputedValue(val) {
+		this.computedValue = val;
 	}
 }
 
@@ -79,18 +103,42 @@ class AVLTree {
 	 * @param {object} node - The current node in the recursive insertion process.
 	 * @param {*} key - The key of the new node.
 	 * @param {*} [value=undefined] - The value associated with the node (for RowNodes).
+	 * @param {object} [style] - Cell formatting/style metadata.
+	 * @param {*} [computedValue=undefined] - The calculated/evaluated outcome.
 	 * @param {Function} createNodeFn - The function to create a new node (e.g., ColumnNode or RowNode).
 	 * @returns {object} The root of the balanced subtree after insertion.
 	 */
-	_Insert(node, key, value, style, createNodeFn) {
+	_Insert(node, key, value, style, computedValue, createNodeFn) {
+		// Handle 5-argument invocation: _Insert(node, key, value, style, createNodeFn)
+		if (typeof computedValue === "function" && createNodeFn === undefined) {
+			createNodeFn = computedValue;
+			computedValue = undefined;
+		}
+
 		if (!node) {
-			return createNodeFn(key, value, style);
+			return createNodeFn
+				? createNodeFn(key, value, style, computedValue)
+				: null;
 		}
 
 		if (key < node.key) {
-			node.left = this._Insert(node.left, key, value, style, createNodeFn);
+			node.left = this._Insert(
+				node.left,
+				key,
+				value,
+				style,
+				computedValue,
+				createNodeFn,
+			);
 		} else if (key > node.key) {
-			node.right = this._Insert(node.right, key, value, style, createNodeFn);
+			node.right = this._Insert(
+				node.right,
+				key,
+				value,
+				style,
+				computedValue,
+				createNodeFn,
+			);
 		} else {
 			// If the key already exists, update its value (relevant for RowNodes)
 			if (value !== undefined) {
@@ -98,6 +146,9 @@ class AVLTree {
 			}
 			if (style !== undefined) {
 				node.style = { ...(node.style || {}), ...style };
+			}
+			if (computedValue !== undefined) {
+				node.computedValue = computedValue;
 			}
 			return node;
 		}
@@ -120,8 +171,8 @@ class AVLTree {
 		return node;
 	}
 
-	Insert(node, key, value, style, createNodeFn) {
-		return this._Insert(node, key, value, style, createNodeFn);
+	Insert(node, key, value, style, computedValue, createNodeFn) {
+		return this._Insert(node, key, value, style, computedValue, createNodeFn);
 	}
 
 	/**
@@ -178,7 +229,11 @@ class Spreadsheet {
 		this.PrimaryKeyMap = new Map(); // used to store rowno as key and primarykey values as value
 		this.CellStore =
 			cellStore ||
-			(typeof AVLCellStore !== "undefined" ? new AVLCellStore() : null);
+			(typeof AVLCellStore !== "undefined"
+				? new AVLCellStore()
+				: typeof require !== "undefined"
+					? new (require("./CellStore.js").AVLCellStore)()
+					: null);
 		this.RenderData = null;
 	}
 
@@ -252,12 +307,20 @@ class Spreadsheet {
 	 * @param {*} colKey - The key identifying the column.
 	 * @param {*} cellValue - The value to store in the cell.
 	 * @param {object} [style={}] - Cell formatting/style metadata.
+	 * @param {*} [computedValue=undefined] - The calculated/evaluated outcome.
 	 */
-	InsertData(rowKey, colKey, cellValue, style = {}) {
+	InsertData(rowKey, colKey, cellValue, style = {}, computedValue = undefined) {
 		if (!this.CellStore) {
-			this.CellStore = new AVLCellStore();
+			this.CellStore =
+				typeof AVLCellStore !== "undefined"
+					? new AVLCellStore()
+					: typeof require !== "undefined"
+						? new (require("./CellStore.js").AVLCellStore)()
+						: null;
 		}
-		this.CellStore.SetCell(rowKey, colKey, cellValue, style);
+		if (this.CellStore) {
+			this.CellStore.SetCell(rowKey, colKey, cellValue, style, computedValue);
+		}
 	}
 
 	/**
@@ -268,6 +331,20 @@ class Spreadsheet {
 	 */
 	RetrieveCellData(rowKey, colKey) {
 		return this.CellStore ? this.CellStore.GetCell(rowKey, colKey) : null;
+	}
+
+	/**
+	 * Retrieves the computed or literal value of a cell, returning 0 if empty.
+	 * @param {*} rowKey - The key identifying the row.
+	 * @param {*} colKey - The key identifying the column.
+	 * @returns {*} The computed value, raw value, or 0.
+	 */
+	GetCellValue(rowKey, colKey) {
+		const cell = this.RetrieveCellData(rowKey, colKey);
+		if (!cell) return 0;
+		return cell.ComputedValue !== undefined && cell.ComputedValue !== null
+			? cell.ComputedValue
+			: (cell.Value ?? cell.value ?? 0);
 	}
 
 	/**
@@ -300,4 +377,14 @@ class Spreadsheet {
 		this.PrimaryKeyMap.clear();
 		this.RenderData = null;
 	}
+}
+
+// Universal module export (Browser global & Node.js CommonJS)
+if (typeof module !== "undefined" && module.exports) {
+	module.exports = {
+		RowNode,
+		ColumnNode,
+		AVLTree,
+		Spreadsheet,
+	};
 }

@@ -92,14 +92,25 @@ class SetCellCommand extends Command {
 			}
 		}
 
+		const valueToSet =
+			this.NewValue !== undefined
+				? this.NewValue
+				: this.OldValue !== undefined
+					? this.OldValue
+					: "";
+		const styleToSet =
+			this.NewStyle !== null && this.NewStyle !== undefined
+				? this.NewStyle
+				: this.OldStyle || {};
+
 		this.SpreadsheetModel.SetCell(
 			this.RowKey,
 			this.ColKey,
-			this.NewValue,
-			this.NewStyle !== null ? this.NewStyle : undefined,
+			valueToSet,
+			styleToSet,
 		);
 
-		this.UpdateDOM(this.NewValue, this.NewStyle);
+		this.UpdateDOM(valueToSet, styleToSet);
 	}
 
 	/**
@@ -137,6 +148,12 @@ class SetCellCommand extends Command {
 		)
 			return;
 
+		const cell = this.SpreadsheetModel?.GetCell(this.RowKey, this.ColKey);
+		const displayValue =
+			cell && cell.ComputedValue !== undefined && cell.ComputedValue !== null
+				? cell.ComputedValue
+				: (value ?? "");
+
 		if (
 			this.SpreadsheetModel?.GridRenderer &&
 			typeof this.SpreadsheetModel.GridRenderer.UpdateCell === "function"
@@ -144,7 +161,7 @@ class SetCellCommand extends Command {
 			this.SpreadsheetModel.GridRenderer.UpdateCell(
 				this.RowKey,
 				this.ColKey,
-				value,
+				displayValue,
 				style,
 			);
 			return;
@@ -159,12 +176,12 @@ class SetCellCommand extends Command {
 				? this.ColKey
 				: columns.indexOf(this.ColKey);
 
-		if (value !== undefined) {
+		if (displayValue !== undefined) {
 			const input = document.querySelector(
 				`input[data-rowno="${this.RowKey}"][data-colno="${colIdx}"]`,
 			);
 			if (input) {
-				input.value = value ?? "";
+				input.value = displayValue ?? "";
 			}
 		}
 
@@ -271,6 +288,12 @@ class ClearRangeCommand extends Command {
 		)
 			return;
 
+		const cell = this.SpreadsheetModel?.GetCell(rowKey, colKey);
+		const displayValue =
+			cell && cell.ComputedValue !== undefined && cell.ComputedValue !== null
+				? cell.ComputedValue
+				: (value ?? "");
+
 		if (
 			this.SpreadsheetModel?.GridRenderer &&
 			typeof this.SpreadsheetModel.GridRenderer.UpdateCell === "function"
@@ -278,7 +301,7 @@ class ClearRangeCommand extends Command {
 			this.SpreadsheetModel.GridRenderer.UpdateCell(
 				rowKey,
 				colKey,
-				value,
+				displayValue,
 				style,
 			);
 			return;
@@ -291,12 +314,12 @@ class ClearRangeCommand extends Command {
 		const colIdx =
 			typeof colKey === "number" ? colKey : columns.indexOf(colKey);
 
-		if (value !== undefined) {
+		if (displayValue !== undefined) {
 			const input = document.querySelector(
 				`input[data-rowno="${rowKey}"][data-colno="${colIdx}"]`,
 			);
 			if (input) {
-				input.value = value ?? "";
+				input.value = displayValue ?? "";
 			}
 		}
 

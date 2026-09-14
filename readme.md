@@ -78,8 +78,9 @@ Arbor enforces two foundational architectural invariants:
 - **Calculation Coordinator (`CalculationEngine.js`)**:
   - Integrates the parser, analyzer, DAG, and evaluator with **zero DOM references**.
   - Maintains an internal AST cache (`FormulaCache`) to eliminate redundant re-parsing during reactive cascades.
-  - **Mutation Deltas**: `ProcessCellUpdate`, `RecalculateDependents`, `RecalculateAll`, and `ClearCells` return complete, deduplicated arrays of affected cell descriptors: `Array<{ RowKey, ColKey, Value, ComputedValue, Style }>`.
-  - **Single-Pass Batch Clearing (`ClearCells`)**: Clears multi-cell ranges, strips dependencies, and recalculates downstream dependents in a single topological pass.
+  - **Mutation Deltas**: `ProcessCellUpdate`, `RecalculateDependents`, `RecalculateAll`, `ClearCells`, and `RestoreCells` return complete, deduplicated arrays of affected cell descriptors: `Array<{ RowKey, ColKey, Value, ComputedValue, Style }>`.
+  - **Single-Pass Batch Operations**: `ClearCells` and `RestoreCells` clear and restore multi-cell ranges, manage dependencies, and execute a single topological recalculation pass.
+  - **Dynamic Cycle Recovery**: When a cycle is broken (e.g. `A1=B1, B1=C1, C1=A1` broken by `A1=10`), `CalculationEngine` automatically identifies unblocked formulas in `CircularFormulas`, recovers their dependencies, and restores valid calculation state.
   - **Dual Value Model**: Stores both the raw input/formula (`Value`) and the computed outcome (`ComputedValue`). Grid cells display `ComputedValue`, switching to raw `Value` on `focusin` for editing.
 
 ### 2. Command Pattern & Undo/Redo Engine (`Phase 4`)
@@ -91,8 +92,9 @@ Arbor enforces two foundational architectural invariants:
   - **Zero View Coupling**: Commands do not manipulate DOM elements or invoke renderers.
   - `SetCellCommand`: Encapsulates single-cell edits with prior value/style preservation, delegating strictly to `SpreadsheetModel.SetCell`.
   - `ClearRangeCommand`: Clears multi-cell ranges via `SpreadsheetModel.ClearCells(entries)`, triggering a single recalculation pass.
-  - `CompoundCommand`: Batches arbitrary command sets into an atomic transaction.
-  - **Atomic Undo**: `ClearRangeCommand.Undo()` wraps cell restorations in `SpreadsheetModel.BatchUpdate(...)`, emitting a single `cellsChanged` event.
+  - `CompoundCommand`: Batches arbitrary command sets into an atomic transaction within a batch context.
+  - **Atomic Undo**: `ClearRangeCommand.Undo()` delegates to `SpreadsheetModel.RestoreCells(this.CellEntries)`, executing a single bulk restore and recalculation pass.
+  - **Command Transaction Invariant**: `SpreadsheetModel.ExecuteCommand()`, `Undo()`, and `Redo()` wrap command executions in `BatchUpdate(...)`, guaranteeing that any operation emits **strictly one** `cellsChanged` event.
 
 ### 3. Event-Driven Grid Presentation Engine (`Phase 5`)
 
@@ -100,7 +102,7 @@ Arbor enforces two foundational architectural invariants:
   - Decoupled as an event subscriber listening to `SpreadsheetModel`'s `cellsChanged` and `sheetReset` events.
   - Performs $O(1)$ single-cell DOM updates (`UpdateCell`) in response to model mutation events without full grid re-renders.
   - Generates table structure, column headers with resize handles, row headers (`C0`), and virtualized data cells using `DocumentFragment`.
-  - Provides clean lifecycle cleanup via `Destroy()`.
+  - Provides clean lifecycle cleanup via `Destroy()`, setting model references and listeners to `null`, with automatic re-binding on `SpreadsheetModel` setter.
 
 ### 4. Headless Selection & Domain Models (`Phases 1 & 3`)
 

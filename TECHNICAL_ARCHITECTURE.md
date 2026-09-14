@@ -268,6 +268,14 @@ When a user presses `Ctrl+Z` to undo the multi-cell clear:
    - Restoring multiple cells that share downstream dependents will overwrite the pending snapshot in `_PendingChanges` with the latest evaluated value.
    - `EndBatch()` decrements `_BatchDepth` back to 0.
 4. Exactly **one** `cellsChanged` event is broadcast containing the restored cells and their recalculated dependents.
+5. `SpreadsheetModel.Undo()` wraps the undo operation in `this.BatchUpdate(...)`.
+6. `CommandManager.Undo()` pops `ClearRangeCommand` from `UndoStack`.
+7. `ClearRangeCommand.Undo()` delegates to `this.SpreadsheetModel.RestoreCells(this.CellEntries)`.
+8. `CalculationEngine.RestoreCells(model, entries)` executes in two phases:
+   - **Phase 1 (Storage & Dependency Registration)**: Iterates entries once, commits all raw values and styles to the cell store, rebuilds formula dependencies in `DependencyGraph`, and registers formula ASTs in `FormulaCache`.
+   - **Phase 2 (Single Unified Recalculation Pass)**: Identifies all restored formula keys, recovered circular formula keys, and downstream dependent cells, computing a single topological recalculation order via `DependencyGraph.GetRecalculationOrder`.
+9. Staged changes are recorded into `SpreadsheetModel._PendingChanges`.
+10. When `BatchUpdate` completes, exactly **one** `cellsChanged` event is broadcast containing the restored cells and their recalculated dependents.
 
 ---
 
@@ -343,6 +351,26 @@ WouldCreateCycle(
    - If any proposed precedent cell or range cell is reachable downstream from `targetCellKey`, adding the edge would introduce a directed cycle. Return `true`.
    - **Crucial Invariant**: During this check, **no graph edges are mutated**. If a cycle is detected, the graph remains 100% clean and consistent.
 3. If `WouldCreateCycle` returns `true`, `CalculationEngine` sets the cell value to `#CIRCULAR!` and does not register the invalid dependencies.
+4. If `WouldCreateCycle` returns `true`, `CalculationEngine` sets the cell value to `#CIRCULAR!`, records the blocked AST in `this.CircularFormulas`, and does not register the invalid dependencies.
+
+---
+
+### Dynamic Cycle Recovery (`CircularFormulas`)
+
+A critical challenge in reactive spreadsheet calculation is circular dependency recovery. When a circular cycle is established (e.g. `A1 = =B1`, `B1 = =C1`, `C1 = =A1`), `C1` cannot register `A1` as a precedent without creating a directed loop.
+
+If `A1` is later overwritten with a constant literal (e.g. `A1 = 10`), the cycle is broken. In naïve engines, `C1` would remain stuck as `#CIRCULAR!` permanently unless manually re-typed.
+
+Arbor solves this via `CalculationEngine.CircularFormulas`:
+
+1. When a formula triggers `WouldCreateCycle`, it is saved in `this.CircularFormulas = new Map()`.
+2. On every cell mutation (`ProcessCellUpdate`, `ClearCells`, `RestoreCells`), `#RecoverCircularFormulas(model)` loops through `CircularFormulas` and re-checks `WouldCreateCycle(key, cells, ranges)`.
+3. If the cycle is broken:
+   - The recovered formula is deleted from `CircularFormulas`.
+   - Its dependencies are restored into `DependencyGraph.SetDependencies`.
+   - Its AST is cached in `FormulaCache`.
+   - It is included in the downstream topological recalculation pass.
+4. Cells automatically transition from `#CIRCULAR!` back to valid numeric or string results.
 
 ---
 
@@ -462,6 +490,34 @@ CalculationEngine.ClearCells(model, entries);
 
 ---
 
+### Bulk Multi-Cell Restoration (`RestoreCells`)
+
+Similarly to clearing, undoing a multi-cell clear operation must not perform $N$ sequential `SetCell` invocations. Doing so would trigger $N$ separate topological traversals and evaluations:
+
+```javascript
+// WRONG (Naïve approach: N recalculation passes in undo):
+for (const entry of cellEntries) {
+	model.SetCell(entry.RowKey, entry.ColKey, entry.OldValue, entry.OldStyle);
+}
+
+// CORRECT (Arbor approach: 1 bulk pass):
+model.RestoreCells(this.CellEntries);
+```
+
+[`CalculationEngine.RestoreCells(model, entries)`](file:///home/shashi/Desktop/WorkingArea/Spreadsheet/CalculationEngine.js#L505) executes in two phases:
+
+1. **Phase 1 (Storage & Dependency Registration)**:
+   - For literal values: writes values and styles into the store, removes previous dependencies, and caches change descriptors.
+   - For formulas: parses the AST, validates cycle constraints, registers DAG dependencies (`Graph.SetDependencies`), caches the AST, and commits the formula to storage.
+   - Re-evaluates `CircularFormulas` to recover any cycles resolved by the restored data.
+2. **Phase 2 (Single Unified Recalculation Pass)**:
+   - Identifies all restored formulas, recovered formulas, and downstream dependent cells.
+   - Runs Kahn's topological sort once across the entire union of affected cells.
+   - Evaluates each cell in exact topological order and commits the result to storage.
+   - Returns a single, complete mutation delta array containing all restored cells and affected dependents.
+
+---
+
 ## 7. Presentation Layer & Event-Driven GridRenderer
 
 ### Subscriber Model & Event Vocabulary
@@ -516,6 +572,8 @@ If a `GridRenderer` is destroyed or attached to a different model:
 
 - **`Destroy()`**: Calls `this.SpreadsheetModel.RemoveListener(this.ModelListener)` to prevent memory leaks and dangling subscriber callbacks.
 - **Model Setter**: Rebinding `renderer.SpreadsheetModel = newModel` automatically detaches the listener from the old model and attaches to the new model.
+- **`Destroy()`**: Calls `this.SpreadsheetModel.RemoveListener(this.ModelListener)`, sets `this._SpreadsheetModel = null`, and nulls `this.ModelListener` to prevent memory leaks and dangling subscriber callbacks.
+- **Model Setter**: Rebinding `renderer.SpreadsheetModel = newModel` automatically detaches the listener from the old model (if any), re-instantiates `this.ModelListener` if null, and registers the listener with the new model.
 
 ---
 
@@ -576,6 +634,7 @@ Never execute multiple `SetCell` calls in a loop without batching.
   	}
   });
   ```
+- **For Bulk Restorations**: Use `model.RestoreCells(entries)` rather than looping `SetCell`. `RestoreCells` performs a single bulk storage write and a single topological recalculation pass across the entire set.
 - **WRONG**: Calling `model.SetCell` repeatedly without `BatchUpdate` causes redundant DAG recalculation and emits multiple `cellsChanged` events.
 
 ### Rule 4: Zero Implicit Recalculation on Sheet Assignment

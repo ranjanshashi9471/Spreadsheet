@@ -166,11 +166,8 @@ class SpreadsheetModel {
 	#RecordChanges(deltaArray) {
 		if (!deltaArray || deltaArray.length === 0) return;
 
-		const resolver = this.CalculationEngine?.Resolver;
 		for (const cell of deltaArray) {
-			const key = resolver
-				? resolver.CoordsToCellKey(cell.RowKey, cell.ColKey)
-				: `${cell.RowKey}:${cell.ColKey}`;
+			const key = `${cell.RowKey}:${cell.ColKey}`;
 			this._PendingChanges.set(key, cell);
 		}
 
@@ -242,12 +239,7 @@ class SpreadsheetModel {
 			spreadsheet.columns.push(`C${i}`);
 		}
 
-		this.CurrentSpreadsheet = spreadsheet;
-
-		this.NotifyListeners({
-			type: SpreadsheetEvents.SheetReset,
-			sheet: spreadsheet,
-		});
+		this.SetCurrentSpreadsheet(spreadsheet);
 
 		return spreadsheet;
 	}
@@ -312,36 +304,39 @@ class SpreadsheetModel {
 			return;
 		}
 
-		let deltas;
 		if (
-			this.CalculationEngine &&
-			typeof this.CalculationEngine.ClearCells === "function"
+			!this.CalculationEngine ||
+			typeof this.CalculationEngine.ClearCells !== "function"
 		) {
-			deltas = this.CalculationEngine.ClearCells(this, entries);
-		} else {
-			deltas = [];
-			for (const entry of entries) {
-				const rowKey = entry.RowKey !== undefined ? entry.RowKey : entry.rowKey;
-				const colKey = entry.ColKey !== undefined ? entry.ColKey : entry.colKey;
-				const numColKey =
-					typeof colKey === "number"
-						? colKey
-						: (this.CalculationEngine?.Resolver?.ToColumnIndex(
-								String(colKey),
-							) ?? colKey);
-				const style =
-					entry.OldStyle || entry.oldStyle || entry.Style || entry.style || {};
-				this.CurrentSpreadsheet.InsertData(rowKey, numColKey, "", style, "");
-				deltas.push({
-					RowKey: rowKey,
-					ColKey: numColKey,
-					Value: "",
-					ComputedValue: "",
-					Style: style,
-				});
-			}
+			throw new Error(
+				"CalculationEngine.ClearCells is required for ClearCells operation.",
+			);
 		}
 
+		const deltas = this.CalculationEngine.ClearCells(this, entries);
+		this.#RecordChanges(deltas);
+	}
+
+	/**
+	 * Restores a batch of cells with a single downstream recalculation pass.
+	 * Used by undo operations to avoid repeated N-pass calculation cycles.
+	 * @param {Array<{ RowKey: number, ColKey: number|string, OldValue?: *, Value?: *, OldStyle?: object, Style?: object }>} entries
+	 */
+	RestoreCells(entries) {
+		if (!this.CurrentSpreadsheet || !entries || entries.length === 0) {
+			return;
+		}
+
+		if (
+			!this.CalculationEngine ||
+			typeof this.CalculationEngine.RestoreCells !== "function"
+		) {
+			throw new Error(
+				"CalculationEngine.RestoreCells is required for RestoreCells operation.",
+			);
+		}
+
+		const deltas = this.CalculationEngine.RestoreCells(this, entries);
 		this.#RecordChanges(deltas);
 	}
 
@@ -371,15 +366,19 @@ class SpreadsheetModel {
 		if (!this.CommandManager) {
 			this.CommandManager = new ModelCommandManager();
 		}
-		return this.CommandManager.ExecuteCommand(command);
+		return this.BatchUpdate(() => this.CommandManager.ExecuteCommand(command));
 	}
 
 	Undo() {
-		return this.CommandManager ? this.CommandManager.Undo() : null;
+		return this.CommandManager
+			? this.BatchUpdate(() => this.CommandManager.Undo())
+			: null;
 	}
 
 	Redo() {
-		return this.CommandManager ? this.CommandManager.Redo() : null;
+		return this.CommandManager
+			? this.BatchUpdate(() => this.CommandManager.Redo())
+			: null;
 	}
 }
 

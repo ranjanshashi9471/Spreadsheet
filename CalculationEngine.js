@@ -95,6 +95,7 @@ class CalculationEngine {
 			resolver ||
 			(typeof CalcRefResolver !== "undefined" ? new CalcRefResolver() : null);
 		this.FormulaCache = new Map(); // cellKey -> { AST: ASTNode, RawFormula: string }
+		this.CircularFormulas = new Map(); // cellKey -> { AST, RawFormula, Cells, Ranges, RowKey, ColKey, Style }
 	}
 
 	// Backwards-compatible lowercase property aliases
@@ -131,6 +132,9 @@ class CalculationEngine {
 	get formulaCache() {
 		return this.FormulaCache;
 	}
+	get circularFormulas() {
+		return this.CircularFormulas;
+	}
 
 	/**
 	 * Checks if a given cell value is a formula.
@@ -164,6 +168,7 @@ class CalculationEngine {
 		if (!this.IsFormula(rawValue)) {
 			this.Graph?.RemoveDependencies(cellKey);
 			this.FormulaCache.delete(cellKey);
+			this.CircularFormulas.delete(cellKey);
 
 			const computedValue = rawValue;
 			this.#CommitCellToStore(
@@ -182,7 +187,11 @@ class CalculationEngine {
 				Style: style,
 			});
 
-			const depChanges = this.RecalculateDependents(model, cellKey);
+			const recovered = this.#RecoverCircularFormulas(model);
+			const keysToRecalc =
+				recovered.length > 0 ? [cellKey, ...recovered] : cellKey;
+
+			const depChanges = this.RecalculateDependents(model, keysToRecalc);
 			for (const c of depChanges) {
 				const k = this.Resolver.CoordsToCellKey(c.RowKey, c.ColKey);
 				changedMap.set(k, c);
@@ -205,6 +214,7 @@ class CalculationEngine {
 		if (!astNode || astNode instanceof CalcErrorNode) {
 			this.Graph?.RemoveDependencies(cellKey);
 			this.FormulaCache.delete(cellKey);
+			this.CircularFormulas.delete(cellKey);
 
 			const computedValue = astNode?.ErrorMessage || "#ERROR!";
 			this.#CommitCellToStore(
@@ -223,7 +233,11 @@ class CalculationEngine {
 				Style: style,
 			});
 
-			const depChanges = this.RecalculateDependents(model, cellKey);
+			const recovered = this.#RecoverCircularFormulas(model);
+			const keysToRecalc =
+				recovered.length > 0 ? [cellKey, ...recovered] : cellKey;
+
+			const depChanges = this.RecalculateDependents(model, keysToRecalc);
 			for (const c of depChanges) {
 				const k = this.Resolver.CoordsToCellKey(c.RowKey, c.ColKey);
 				changedMap.set(k, c);
@@ -241,6 +255,15 @@ class CalculationEngine {
 		if (this.Graph && this.Graph.WouldCreateCycle(cellKey, Cells, Ranges)) {
 			this.Graph.RemoveDependencies(cellKey);
 			this.FormulaCache.delete(cellKey);
+			this.CircularFormulas.set(cellKey, {
+				AST: astNode,
+				RawFormula: rawFormula,
+				Cells,
+				Ranges,
+				RowKey: rowKey,
+				ColKey: numColKey,
+				Style: style,
+			});
 
 			const computedValue = "#CIRCULAR!";
 			this.#CommitCellToStore(
@@ -273,6 +296,7 @@ class CalculationEngine {
 			this.Graph.SetDependencies(cellKey, Cells, Ranges);
 		}
 		this.FormulaCache.set(cellKey, { AST: astNode, RawFormula: rawFormula });
+		this.CircularFormulas.delete(cellKey);
 
 		// Evaluate formula in model context
 		let computedValue;
@@ -301,8 +325,11 @@ class CalculationEngine {
 			Style: style,
 		});
 
-		// Recalculate downstream dependent cells
-		const depChanges = this.RecalculateDependents(model, cellKey);
+		// Check if any circular formulas can now be recovered
+		const recovered = this.#RecoverCircularFormulas(model);
+
+		// Recalculate downstream dependent cells and any recovered circular formulas
+		const depChanges = this.RecalculateDependents(model, cellKey, recovered);
 		for (const c of depChanges) {
 			const k = this.Resolver.CoordsToCellKey(c.RowKey, c.ColKey);
 			changedMap.set(k, c);
@@ -313,11 +340,13 @@ class CalculationEngine {
 
 	/**
 	 * Recalculates all downstream dependent cells in topological order.
+	 * Also recalculates any explicitly supplied formula keys (e.g. recovered circular formulas or restored formulas).
 	 * @param {SpreadsheetModel|object} model - The active spreadsheet model.
 	 * @param {string|string[]} changedCellKeys - One or more cell keys that changed.
+	 * @param {string|string[]} [includeFormulaKeys=[]] - Formula cell keys that must be evaluated themselves.
 	 * @returns {Array<{ RowKey: number, ColKey: number, Value: *, ComputedValue: *, Style: object }>}
 	 */
-	RecalculateDependents(model, changedCellKeys) {
+	RecalculateDependents(model, changedCellKeys, includeFormulaKeys = []) {
 		if (!this.Graph || !this.Evaluator) {
 			return [];
 		}
@@ -325,7 +354,10 @@ class CalculationEngine {
 		const keys = Array.isArray(changedCellKeys)
 			? changedCellKeys
 			: [changedCellKeys];
-		const recalcResult = this.Graph.GetRecalculationOrder(keys);
+		const formulaKeys = Array.isArray(includeFormulaKeys)
+			? includeFormulaKeys
+			: [includeFormulaKeys];
+		const recalcResult = this.Graph.GetRecalculationOrder(keys, formulaKeys);
 		const changedMap = new Map();
 
 		// Flag any circular cells detected downstream
@@ -437,6 +469,7 @@ class CalculationEngine {
 
 			this.Graph?.RemoveDependencies(cellKey);
 			this.FormulaCache.delete(cellKey);
+			this.CircularFormulas.delete(cellKey);
 
 			const style =
 				entry.OldStyle || entry.oldStyle || entry.Style || entry.style || {};
@@ -450,7 +483,175 @@ class CalculationEngine {
 			});
 		}
 
-		const depChanges = this.RecalculateDependents(model, clearedKeys);
+		const recovered = this.#RecoverCircularFormulas(model);
+		const depChanges = this.RecalculateDependents(
+			model,
+			clearedKeys,
+			recovered,
+		);
+		for (const c of depChanges) {
+			const k = this.Resolver.CoordsToCellKey(c.RowKey, c.ColKey);
+			changedMap.set(k, c);
+		}
+
+		return Array.from(changedMap.values());
+	}
+
+	/**
+	 * Restores a batch of cells, commits values to store, reconstructs formula dependencies,
+	 * and executes a SINGLE downstream recalculation pass across all restored and dependent cells.
+	 * @param {SpreadsheetModel|object} model - The active spreadsheet model.
+	 * @param {Array<{ RowKey: number, ColKey: number|string, OldValue?: *, Value?: *, OldStyle?: object, Style?: object }>} entries
+	 * @returns {Array<{ RowKey: number, ColKey: number, Value: *, ComputedValue: *, Style: object }>}
+	 */
+	RestoreCells(model, entries) {
+		if (!model || !entries || entries.length === 0) return [];
+		const changedMap = new Map();
+		const changedLiteralKeys = [];
+		const restoredFormulaKeys = [];
+
+		// Phase 1: Write all cell values and styles into storage and register dependencies
+		for (const entry of entries) {
+			const rowKey = entry.RowKey !== undefined ? entry.RowKey : entry.rowKey;
+			const colKey = entry.ColKey !== undefined ? entry.ColKey : entry.colKey;
+			const numColKey =
+				typeof colKey === "number"
+					? colKey
+					: this.Resolver.ToColumnIndex(String(colKey));
+			const cellKey = this.Resolver.CoordsToCellKey(rowKey, numColKey);
+			const rawVal =
+				entry.OldValue !== undefined
+					? entry.OldValue
+					: entry.Value !== undefined
+						? entry.Value
+						: "";
+			const style =
+				entry.OldStyle || entry.oldStyle || entry.Style || entry.style || {};
+
+			if (!this.IsFormula(rawVal)) {
+				this.Graph?.RemoveDependencies(cellKey);
+				this.FormulaCache.delete(cellKey);
+				this.CircularFormulas.delete(cellKey);
+
+				this.#CommitCellToStore(
+					model,
+					rowKey,
+					numColKey,
+					rawVal,
+					style,
+					rawVal,
+				);
+				changedLiteralKeys.push(cellKey);
+				changedMap.set(cellKey, {
+					RowKey: rowKey,
+					ColKey: numColKey,
+					Value: rawVal,
+					ComputedValue: rawVal,
+					Style: style,
+				});
+			} else {
+				const rawFormula = String(rawVal).trim();
+				let astNode;
+				try {
+					astNode = this.Parser ? this.Parser.Parse(rawFormula) : null;
+				} catch (err) {
+					astNode = new CalcErrorNode("#ERROR!");
+				}
+
+				if (!astNode || astNode instanceof CalcErrorNode) {
+					this.Graph?.RemoveDependencies(cellKey);
+					this.FormulaCache.delete(cellKey);
+					this.CircularFormulas.delete(cellKey);
+
+					const errVal = astNode?.ErrorMessage || "#ERROR!";
+					this.#CommitCellToStore(
+						model,
+						rowKey,
+						numColKey,
+						rawFormula,
+						style,
+						errVal,
+					);
+					changedLiteralKeys.push(cellKey);
+					changedMap.set(cellKey, {
+						RowKey: rowKey,
+						ColKey: numColKey,
+						Value: rawFormula,
+						ComputedValue: errVal,
+						Style: style,
+					});
+				} else {
+					const { Cells, Ranges } = this.Analyzer
+						? this.Analyzer.Analyze(astNode)
+						: { Cells: new Set(), Ranges: [] };
+
+					if (
+						this.Graph &&
+						this.Graph.WouldCreateCycle(cellKey, Cells, Ranges)
+					) {
+						this.Graph.RemoveDependencies(cellKey);
+						this.FormulaCache.delete(cellKey);
+						this.CircularFormulas.set(cellKey, {
+							AST: astNode,
+							RawFormula: rawFormula,
+							Cells,
+							Ranges,
+							RowKey: rowKey,
+							ColKey: numColKey,
+							Style: style,
+						});
+
+						this.#CommitCellToStore(
+							model,
+							rowKey,
+							numColKey,
+							rawFormula,
+							style,
+							"#CIRCULAR!",
+						);
+						changedLiteralKeys.push(cellKey);
+						changedMap.set(cellKey, {
+							RowKey: rowKey,
+							ColKey: numColKey,
+							Value: rawFormula,
+							ComputedValue: "#CIRCULAR!",
+							Style: style,
+						});
+					} else {
+						if (this.Graph) {
+							this.Graph.SetDependencies(cellKey, Cells, Ranges);
+						}
+						this.FormulaCache.set(cellKey, {
+							AST: astNode,
+							RawFormula: rawFormula,
+						});
+						this.CircularFormulas.delete(cellKey);
+
+						// Commit the raw formula to storage (will be evaluated in Phase 2)
+						this.#CommitCellToStore(
+							model,
+							rowKey,
+							numColKey,
+							rawFormula,
+							style,
+							undefined,
+						);
+						restoredFormulaKeys.push(cellKey);
+					}
+				}
+			}
+		}
+
+		// Check for circular formula recovery
+		const recovered = this.#RecoverCircularFormulas(model);
+		const formulaKeysToCalculate = [...restoredFormulaKeys, ...recovered];
+
+		// Phase 2: Single recalculation pass for all restored cells and downstream dependents!
+		const depChanges = this.RecalculateDependents(
+			model,
+			changedLiteralKeys,
+			formulaKeysToCalculate,
+		);
 		for (const c of depChanges) {
 			const k = this.Resolver.CoordsToCellKey(c.RowKey, c.ColKey);
 			changedMap.set(k, c);
@@ -630,11 +831,49 @@ class CalculationEngine {
 	}
 
 	/**
-	 * Clears the dependency graph and AST cache.
+	 * Clears the dependency graph, AST cache, and circular formula tracking.
 	 */
 	Clear() {
 		this.Graph?.Clear();
 		this.FormulaCache.clear();
+		this.CircularFormulas.clear();
+	}
+
+	/**
+	 * Checks if any currently circular formulas can now be safely re-introduced
+	 * into the dependency graph without creating cycles.
+	 * @private
+	 * @param {SpreadsheetModel|object} model
+	 * @returns {string[]} Recovered cell keys
+	 */
+	#RecoverCircularFormulas(model) {
+		if (this.CircularFormulas.size === 0 || !this.Graph) {
+			return [];
+		}
+
+		const recoveredKeys = [];
+		let progress = true;
+		while (progress) {
+			progress = false;
+			for (const [circKey, circData] of Array.from(
+				this.CircularFormulas.entries(),
+			)) {
+				if (
+					!this.Graph.WouldCreateCycle(circKey, circData.Cells, circData.Ranges)
+				) {
+					this.CircularFormulas.delete(circKey);
+					this.Graph.SetDependencies(circKey, circData.Cells, circData.Ranges);
+					this.FormulaCache.set(circKey, {
+						AST: circData.AST,
+						RawFormula: circData.RawFormula,
+					});
+					recoveredKeys.push(circKey);
+					progress = true;
+				}
+			}
+		}
+
+		return recoveredKeys;
 	}
 
 	/**

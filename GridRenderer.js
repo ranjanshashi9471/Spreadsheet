@@ -55,12 +55,13 @@ class GridRenderer {
 
 		this._SpreadsheetModel = val;
 
-		if (
-			this._SpreadsheetModel &&
-			this.ModelListener &&
-			typeof this._SpreadsheetModel.AddListener === "function"
-		) {
-			this._SpreadsheetModel.AddListener(this.ModelListener);
+		if (this._SpreadsheetModel) {
+			if (!this.ModelListener) {
+				this.ModelListener = (event) => this.OnModelEvent(event);
+			}
+			if (typeof this._SpreadsheetModel.AddListener === "function") {
+				this._SpreadsheetModel.AddListener(this.ModelListener);
+			}
 		}
 	}
 
@@ -92,7 +93,7 @@ class GridRenderer {
 	}
 
 	/**
-	 * Destroys the renderer instance, unregistering listeners.
+	 * Destroys the renderer instance, unregistering listeners and clearing model reference.
 	 */
 	Destroy() {
 		if (
@@ -102,6 +103,7 @@ class GridRenderer {
 		) {
 			this._SpreadsheetModel.RemoveListener(this.ModelListener);
 		}
+		this._SpreadsheetModel = null;
 		this.ModelListener = null;
 	}
 

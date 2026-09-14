@@ -176,22 +176,12 @@ class ClearRangeCommand extends Command {
 
 	/**
 	 * Restores every cleared cell to its previous value and style.
-	 * Executes within a batch context to emit a single notification transaction.
+	 * Executes a single bulk restore and recalculation pass.
 	 */
 	Undo() {
 		if (!this.SpreadsheetModel) return;
 
-		this.SpreadsheetModel.BatchUpdate(() => {
-			for (let i = 0; i < this.CellEntries.length; i++) {
-				const entry = this.CellEntries[i];
-				this.SpreadsheetModel.SetCell(
-					entry.RowKey,
-					entry.ColKey,
-					entry.OldValue,
-					entry.OldStyle || {},
-				);
-			}
-		});
+		this.SpreadsheetModel.RestoreCells(this.CellEntries);
 	}
 
 	/**
@@ -208,11 +198,17 @@ class ClearRangeCommand extends Command {
 class CompoundCommand extends Command {
 	/**
 	 * @param {Array<Command>} [commands=[]]
+	 * @param {SpreadsheetModel|null} [spreadsheetModel=null]
 	 * @param {string} [description="Compound Command"]
 	 */
-	constructor(commands = [], description = "Compound Command") {
+	constructor(
+		commands = [],
+		spreadsheetModel = null,
+		description = "Compound Command",
+	) {
 		super(description);
 		this.Commands = commands;
+		this.SpreadsheetModel = spreadsheetModel;
 	}
 
 	/**
@@ -224,29 +220,62 @@ class CompoundCommand extends Command {
 	}
 
 	/**
-	 * Executes all sub-commands in forward order.
+	 * Executes all sub-commands in forward order within a batch context if model is available.
 	 */
 	Execute() {
-		for (let i = 0; i < this.Commands.length; i++) {
-			this.Commands[i].Execute();
+		if (
+			this.SpreadsheetModel &&
+			typeof this.SpreadsheetModel.BatchUpdate === "function"
+		) {
+			this.SpreadsheetModel.BatchUpdate(() => {
+				for (let i = 0; i < this.Commands.length; i++) {
+					this.Commands[i].Execute();
+				}
+			});
+		} else {
+			for (let i = 0; i < this.Commands.length; i++) {
+				this.Commands[i].Execute();
+			}
 		}
 	}
 
 	/**
-	 * Undoes all sub-commands in reverse order.
+	 * Undoes all sub-commands in reverse order within a batch context if model is available.
 	 */
 	Undo() {
-		for (let i = this.Commands.length - 1; i >= 0; i--) {
-			this.Commands[i].Undo();
+		if (
+			this.SpreadsheetModel &&
+			typeof this.SpreadsheetModel.BatchUpdate === "function"
+		) {
+			this.SpreadsheetModel.BatchUpdate(() => {
+				for (let i = this.Commands.length - 1; i >= 0; i--) {
+					this.Commands[i].Undo();
+				}
+			});
+		} else {
+			for (let i = this.Commands.length - 1; i >= 0; i--) {
+				this.Commands[i].Undo();
+			}
 		}
 	}
 
 	/**
-	 * Redoes all sub-commands in forward order.
+	 * Redoes all sub-commands in forward order within a batch context if model is available.
 	 */
 	Redo() {
-		for (let i = 0; i < this.Commands.length; i++) {
-			this.Commands[i].Redo();
+		if (
+			this.SpreadsheetModel &&
+			typeof this.SpreadsheetModel.BatchUpdate === "function"
+		) {
+			this.SpreadsheetModel.BatchUpdate(() => {
+				for (let i = 0; i < this.Commands.length; i++) {
+					this.Commands[i].Redo();
+				}
+			});
+		} else {
+			for (let i = 0; i < this.Commands.length; i++) {
+				this.Commands[i].Redo();
+			}
 		}
 	}
 }

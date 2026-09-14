@@ -362,8 +362,93 @@ assert.strictEqual(
 );
 assert.strictEqual(eventLog[0].type, SpreadsheetEvents.CellsChanged);
 
+// Test 4.6: CompoundCommand transaction -> exactly 1 event for Execute, Undo, and Redo
+const compModel = new SpreadsheetModel();
+compModel.CreateBlank("CompoundSheet", 10, 10);
+const compLog = [];
+compModel.AddListener((e) => compLog.push(e));
+
+const c1 = new SetCellCommand(compModel, 1, 0, "alpha");
+const c2 = new SetCellCommand(compModel, 1, 1, "beta");
+const c3 = new SetCellCommand(compModel, 1, 2, "gamma");
+const compCmd = new CompoundCommand([c1, c2, c3], compModel, "Set 3 cells");
+
+compLog.length = 0;
+compModel.ExecuteCommand(compCmd);
+assert.strictEqual(
+	compLog.length,
+	1,
+	"CompoundCommand Execute must emit exactly 1 cellsChanged event",
+);
+assert.strictEqual(compLog[0].type, SpreadsheetEvents.CellsChanged);
+assert.strictEqual(
+	compLog[0].cells.length,
+	3,
+	"CompoundCommand Execute must report 3 affected cells in a single batch",
+);
+assert.strictEqual(compModel.GetCellValue(1, 0), "alpha");
+assert.strictEqual(compModel.GetCellValue(1, 1), "beta");
+assert.strictEqual(compModel.GetCellValue(1, 2), "gamma");
+
+// Undo CompoundCommand
+compLog.length = 0;
+compModel.Undo();
+assert.strictEqual(
+	compLog.length,
+	1,
+	"CompoundCommand Undo must emit exactly 1 cellsChanged event",
+);
+assert.strictEqual(compLog[0].type, SpreadsheetEvents.CellsChanged);
+assert.strictEqual(
+	compLog[0].cells.length,
+	3,
+	"CompoundCommand Undo must report 3 affected cells in a single batch",
+);
+assert.strictEqual(compModel.GetCellValue(1, 0), "");
+assert.strictEqual(compModel.GetCellValue(1, 1), "");
+assert.strictEqual(compModel.GetCellValue(1, 2), "");
+
+// Redo CompoundCommand
+compLog.length = 0;
+compModel.Redo();
+assert.strictEqual(
+	compLog.length,
+	1,
+	"CompoundCommand Redo must emit exactly 1 cellsChanged event",
+);
+assert.strictEqual(compLog[0].type, SpreadsheetEvents.CellsChanged);
+assert.strictEqual(
+	compLog[0].cells.length,
+	3,
+	"CompoundCommand Redo must report 3 affected cells in a single batch",
+);
+assert.strictEqual(compModel.GetCellValue(1, 0), "alpha");
+assert.strictEqual(compModel.GetCellValue(1, 1), "beta");
+assert.strictEqual(compModel.GetCellValue(1, 2), "gamma");
+
+// Test 4.7: Direct RestoreCells bulk calculation pass -> 1 event, formulas evaluated
+const restoreModel = new SpreadsheetModel();
+restoreModel.CreateBlank("RestoreSheet", 10, 10);
+const restoreLog = [];
+restoreModel.AddListener((e) => restoreLog.push(e));
+
+restoreModel.RestoreCells([
+	{ RowKey: 1, ColKey: 0, OldValue: 50 },
+	{ RowKey: 1, ColKey: 1, OldValue: "=A1 * 4" },
+]);
+
+assert.strictEqual(
+	restoreLog.length,
+	1,
+	"RestoreCells must emit exactly 1 cellsChanged event",
+);
+assert.strictEqual(restoreLog[0].type, SpreadsheetEvents.CellsChanged);
+assert.strictEqual(restoreModel.GetCellValue(1, 0), 50);
+assert.strictEqual(restoreModel.GetCellValue(1, 1), 200);
+
 console.log(
 	"   ✅ Single-Notification Transaction Invariant strictly enforced across edits, clears, undo, redo.\n",
+	"   ✅ Single-Notification Transaction Invariant strictly enforced across edits, compound commands, clears, bulk restore, undo, redo.\n",
 );
 
 // -----------------------------------------------------------------------------
@@ -508,6 +593,17 @@ assert.strictEqual(cellDOMUpdates[0].value, "Hello Renderer");
 cellDOMUpdates.length = 0;
 mockRenderer.Destroy();
 
+assert.strictEqual(
+	mockRenderer.SpreadsheetModel,
+	null,
+	"Destroy must set SpreadsheetModel to null",
+);
+assert.strictEqual(
+	mockRenderer.ModelListener,
+	null,
+	"Destroy must set ModelListener to null",
+);
+
 renderModel.SetCell(1, 0, "After Destroy");
 assert.strictEqual(
 	cellDOMUpdates.length,
@@ -515,8 +611,35 @@ assert.strictEqual(
 	"Destroyed GridRenderer must not receive further updates",
 );
 
+// Test Rebinding
+const renderModel2 = new SpreadsheetModel();
+renderModel2.CreateBlank("RenderSheet2", 5, 5);
+mockRenderer.SpreadsheetModel = renderModel2;
+
+assert.strictEqual(
+	mockRenderer.SpreadsheetModel,
+	renderModel2,
+	"SpreadsheetModel setter must update model reference",
+);
+assert.strictEqual(
+	typeof mockRenderer.ModelListener,
+	"function",
+	"SpreadsheetModel setter must re-create and attach listener",
+);
+
+renderModel2.SetCell(2, 0, "Rebound Update");
+assert.strictEqual(
+	cellDOMUpdates.length,
+	1,
+	"Rebound GridRenderer must receive updates from new model",
+);
+assert.strictEqual(cellDOMUpdates[0].rowKey, 2);
+assert.strictEqual(cellDOMUpdates[0].colKey, 0);
+assert.strictEqual(cellDOMUpdates[0].value, "Rebound Update");
+
 console.log(
 	"   ✅ GridRenderer cleanly decoupled as an event-driven subscriber.\n",
+	"   ✅ GridRenderer cleanly decoupled as an event-driven subscriber with lifecycle management.\n",
 );
 
 // -----------------------------------------------------------------------------
@@ -573,8 +696,70 @@ console.log(
 
 // -----------------------------------------------------------------------------
 // 9. Full Regression Across Slices 1 to 9 & DB Save
+// 9. 3-Cell Circular Dependency Cycle Creation & Automatic Recovery
 // -----------------------------------------------------------------------------
 console.log("9. Verifying Full Regression Across All Slices...");
+console.log(
+	"9. Verifying 3-Cell Circular Dependency Cycle Creation & Automatic Recovery...",
+);
+
+const circModel = new SpreadsheetModel();
+circModel.CreateBlank("CircSheet", 5, 5);
+
+// Create 3-cell cycle: A1 = =B1, B1 = =C1, C1 = =A1
+circModel.SetCell(1, 0, "=B1"); // A1 depends on B1
+circModel.SetCell(1, 1, "=C1"); // B1 depends on C1
+circModel.SetCell(1, 2, "=A1"); // C1 depends on A1 -> Cycle detected!
+
+assert.strictEqual(
+	circModel.GetCellValue(1, 2),
+	"#CIRCULAR!",
+	"C1 must evaluate to #CIRCULAR!",
+);
+assert.strictEqual(
+	circModel.GetCellValue(1, 1),
+	"#CIRCULAR!",
+	"B1 must evaluate to #CIRCULAR!",
+);
+assert.strictEqual(
+	circModel.GetCellValue(1, 0),
+	"#CIRCULAR!",
+	"A1 must evaluate to #CIRCULAR!",
+);
+assert.strictEqual(
+	circModel.CalculationEngine.CircularFormulas.size,
+	1,
+	"Engine must track circular formula",
+);
+
+// Break the cycle: Set A1 = 10 (literal number)
+circModel.SetCell(1, 0, 10);
+
+assert.strictEqual(circModel.GetCellValue(1, 0), 10, "A1 must now be 10");
+assert.strictEqual(
+	circModel.GetCellValue(1, 2),
+	10,
+	"C1 must automatically recover and evaluate to 10 (=A1)",
+);
+assert.strictEqual(
+	circModel.GetCellValue(1, 1),
+	10,
+	"B1 must automatically recover and evaluate to 10 (=C1)",
+);
+assert.strictEqual(
+	circModel.CalculationEngine.CircularFormulas.size,
+	0,
+	"All circular formulas must be recovered and cleared from CircularFormulas",
+);
+
+console.log(
+	"   ✅ 3-Cell circular cycle correctly diagnosed and automatically recovered upon breaking.\n",
+);
+
+// -----------------------------------------------------------------------------
+// 10. Full Regression Across Slices 1 to 9 & DB Save
+// -----------------------------------------------------------------------------
+console.log("10. Verifying Full Regression Across All Slices...");
 
 const { execSync } = require("child_process");
 const testFiles = [

@@ -299,21 +299,31 @@ class DependencyGraph {
 	}
 
 	/**
-	 * Computes the topological recalculation order for all downstream cells affected by changes to changedCellKeys.
+	 * Computes the topological recalculation order for all downstream cells affected by changes to changedCellKeys,
+	 * as well as any specified formula cells that must be recalculated themselves.
 	 * Uses Kahn's algorithm restricted to the affected subgraph.
 	 * @param {string|string[]} changedCellKeys
+	 * @param {string|string[]} [includeFormulaKeys=[]]
 	 * @returns {{ Order: string[], HasCycle: boolean, CircularCells: string[] }}
 	 */
-	GetRecalculationOrder(changedCellKeys) {
+	GetRecalculationOrder(changedCellKeys, includeFormulaKeys = []) {
 		const changed = (
 			Array.isArray(changedCellKeys) ? changedCellKeys : [changedCellKeys]
 		)
 			.filter((k) => k && typeof k === "string")
 			.map((k) => k.trim().toUpperCase());
 
+		const includeFormulas = (
+			Array.isArray(includeFormulaKeys)
+				? includeFormulaKeys
+				: [includeFormulaKeys]
+		)
+			.filter((k) => k && typeof k === "string")
+			.map((k) => k.trim().toUpperCase());
+
 		// 1. Traverse all reachable downstream dependent cells (affected subgraph)
-		const affected = new Set();
-		const queue = [...changed];
+		const affected = new Set(includeFormulas);
+		const queue = [...changed, ...includeFormulas];
 		const visited = new Set();
 
 		while (queue.length > 0) {

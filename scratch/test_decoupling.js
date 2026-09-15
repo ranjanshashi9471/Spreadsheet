@@ -447,7 +447,6 @@ assert.strictEqual(restoreModel.GetCellValue(1, 0), 50);
 assert.strictEqual(restoreModel.GetCellValue(1, 1), 200);
 
 console.log(
-	"   ✅ Single-Notification Transaction Invariant strictly enforced across edits, clears, undo, redo.\n",
 	"   ✅ Single-Notification Transaction Invariant strictly enforced across edits, compound commands, clears, bulk restore, undo, redo.\n",
 );
 
@@ -638,7 +637,6 @@ assert.strictEqual(cellDOMUpdates[0].colKey, 0);
 assert.strictEqual(cellDOMUpdates[0].value, "Rebound Update");
 
 console.log(
-	"   ✅ GridRenderer cleanly decoupled as an event-driven subscriber.\n",
 	"   ✅ GridRenderer cleanly decoupled as an event-driven subscriber with lifecycle management.\n",
 );
 
@@ -695,65 +693,251 @@ console.log(
 );
 
 // -----------------------------------------------------------------------------
-// 9. Full Regression Across Slices 1 to 9 & DB Save
-// 9. 3-Cell Circular Dependency Cycle Creation & Automatic Recovery
+// 9. Circular Dependency Cycle Creation & Multi-Turn Automatic Recovery
 // -----------------------------------------------------------------------------
-console.log("9. Verifying Full Regression Across All Slices...");
 console.log(
-	"9. Verifying 3-Cell Circular Dependency Cycle Creation & Automatic Recovery...",
+	"9. Verifying Circular Dependency Cycle Creation & Multi-Turn Automatic Recovery...",
 );
 
-const circModel = new SpreadsheetModel();
-circModel.CreateBlank("CircSheet", 5, 5);
+// 9.1: 2-Cell Cycle & Recovery: A1 = =B1, B1 = =A1 -> B1 becomes #CIRCULAR!, A1 = 10 -> B1 becomes 10
+const circ2Model = new SpreadsheetModel();
+circ2Model.CreateBlank("Circ2Sheet", 5, 5);
+const circ2Events = [];
+circ2Model.AddListener((e) => circ2Events.push(e));
 
-// Create 3-cell cycle: A1 = =B1, B1 = =C1, C1 = =A1
-circModel.SetCell(1, 0, "=B1"); // A1 depends on B1
-circModel.SetCell(1, 1, "=C1"); // B1 depends on C1
-circModel.SetCell(1, 2, "=A1"); // C1 depends on A1 -> Cycle detected!
+circ2Model.SetCell(1, 0, "=B1");
+circ2Events.length = 0;
+circ2Model.SetCell(1, 1, "=A1");
 
+assert.strictEqual(circ2Events.length, 1, "Creating cycle must emit 1 event");
 assert.strictEqual(
-	circModel.GetCellValue(1, 2),
-	"#CIRCULAR!",
-	"C1 must evaluate to #CIRCULAR!",
-);
-assert.strictEqual(
-	circModel.GetCellValue(1, 1),
+	circ2Model.GetCellValue(1, 1),
 	"#CIRCULAR!",
 	"B1 must evaluate to #CIRCULAR!",
 );
 assert.strictEqual(
-	circModel.GetCellValue(1, 0),
+	circ2Model.GetCellValue(1, 0),
 	"#CIRCULAR!",
 	"A1 must evaluate to #CIRCULAR!",
 );
 assert.strictEqual(
-	circModel.CalculationEngine.CircularFormulas.size,
+	circ2Model.CalculationEngine.CircularFormulas.size,
+	1,
+	"Engine must track 1 circular formula for 2-cell cycle",
+);
+
+// Break 2-cell cycle: A1 = 10
+circ2Events.length = 0;
+circ2Model.SetCell(1, 0, 10);
+
+assert.strictEqual(circ2Events.length, 1, "Breaking cycle must emit 1 event");
+assert.strictEqual(circ2Model.GetCellValue(1, 0), 10, "A1 must be 10");
+assert.strictEqual(
+	circ2Model.GetCellValue(1, 1),
+	10,
+	"B1 must recover and evaluate to 10 (=A1)",
+);
+const b1Cell = circ2Model.GetCell(1, 1);
+assert.strictEqual(
+	b1Cell.ComputedValue,
+	10,
+	"B1.ComputedValue in store must be 10",
+);
+assert.ok(
+	circ2Model.CalculationEngine.Graph.Precedents.get("B1")?.has("A1"),
+	"DependencyGraph must contain B1 dependency on A1 after recovery",
+);
+assert.strictEqual(
+	circ2Model.CalculationEngine.CircularFormulas.size,
+	0,
+	"CircularFormulas must be empty after 2-cell recovery",
+);
+
+// 9.2: 3-Cell Cycle & Recovery: A1 = =B1, B1 = =C1, C1 = =A1 -> break A1 -> verify B1/C1 recover
+const circ3Model = new SpreadsheetModel();
+circ3Model.CreateBlank("Circ3Sheet", 5, 5);
+const circ3Events = [];
+circ3Model.AddListener((e) => circ3Events.push(e));
+
+circ3Model.SetCell(1, 0, "=B1"); // A1 depends on B1
+circ3Model.SetCell(1, 1, "=C1"); // B1 depends on C1
+circ3Model.SetCell(1, 2, "=A1"); // C1 depends on A1 -> Cycle detected!
+
+assert.strictEqual(
+	circ3Model.GetCellValue(1, 2),
+	"#CIRCULAR!",
+	"C1 must evaluate to #CIRCULAR!",
+// Invariant: Affected circular formulas cannot produce a normal numeric result
+assert.ok(
+	typeof circ3Model.GetCellValue(1, 2) === "string" &&
+		circ3Model.GetCellValue(1, 2).startsWith("#"),
+	"C1 cannot produce a normal numeric result in circular state",
+);
+assert.strictEqual(
+	circ3Model.GetCellValue(1, 1),
+	"#CIRCULAR!",
+	"B1 must evaluate to #CIRCULAR!",
+assert.ok(
+	typeof circ3Model.GetCellValue(1, 1) === "string" &&
+		circ3Model.GetCellValue(1, 1).startsWith("#"),
+	"B1 cannot produce a normal numeric result in circular state",
+);
+assert.strictEqual(
+	circ3Model.GetCellValue(1, 0),
+	"#CIRCULAR!",
+	"A1 must evaluate to #CIRCULAR!",
+);
+assert.strictEqual(
+	circ3Model.CalculationEngine.CircularFormulas.size,
 	1,
 	"Engine must track circular formula",
 );
 
-// Break the cycle: Set A1 = 10 (literal number)
-circModel.SetCell(1, 0, 10);
+// Break the 3-cell cycle: Set A1 = 10 (literal number)
+circ3Events.length = 0;
+circ3Model.SetCell(1, 0, 10);
 
-assert.strictEqual(circModel.GetCellValue(1, 0), 10, "A1 must now be 10");
 assert.strictEqual(
-	circModel.GetCellValue(1, 2),
+	circ3Events.length,
+	1,
+	"Breaking 3-cell cycle must emit exactly 1 cellsChanged event",
+);
+assert.strictEqual(circ3Model.GetCellValue(1, 0), 10, "A1 must now be 10");
+assert.strictEqual(
+	circ3Model.GetCellValue(1, 2),
 	10,
 	"C1 must automatically recover and evaluate to 10 (=A1)",
 );
 assert.strictEqual(
-	circModel.GetCellValue(1, 1),
+	circ3Model.GetCellValue(1, 1),
 	10,
 	"B1 must automatically recover and evaluate to 10 (=C1)",
 );
+assert.ok(
+	circ3Model.CalculationEngine.Graph.Precedents.get("C1")?.has("A1"),
+	"C1 precedent on A1 must be restored in graph",
+);
+assert.ok(
+	circ3Model.CalculationEngine.Graph.Precedents.get("B1")?.has("C1"),
+	"B1 precedent on C1 must be restored in graph",
+);
 assert.strictEqual(
-	circModel.CalculationEngine.CircularFormulas.size,
+	circ3Model.CalculationEngine.CircularFormulas.size,
 	0,
 	"All circular formulas must be recovered and cleared from CircularFormulas",
 );
 
+// 9.3: Repeated Cycle: create cycle -> break cycle -> recreate cycle -> break cycle again
+const repeatModel = new SpreadsheetModel();
+repeatModel.CreateBlank("RepeatSheet", 5, 5);
+
+// Round 1: Create cycle
+repeatModel.SetCell(1, 0, "=B1");
+repeatModel.SetCell(1, 1, "=A1");
+assert.strictEqual(repeatModel.GetCellValue(1, 1), "#CIRCULAR!");
+assert.strictEqual(repeatModel.CalculationEngine.CircularFormulas.size, 1);
+
+// Round 1: Break cycle
+repeatModel.SetCell(1, 0, 50);
+assert.strictEqual(repeatModel.GetCellValue(1, 0), 50);
+assert.strictEqual(repeatModel.GetCellValue(1, 1), 50);
+assert.strictEqual(repeatModel.CalculationEngine.CircularFormulas.size, 0);
+
+// Round 2: Recreate cycle (A1 proposes =B1 while B1 is still =A1)
+repeatModel.SetCell(1, 0, "=B1");
+assert.strictEqual(repeatModel.GetCellValue(1, 0), "#CIRCULAR!");
+assert.strictEqual(repeatModel.CalculationEngine.CircularFormulas.size, 1);
+
+// Round 2: Break cycle again (mutate B1 to 100)
+repeatModel.SetCell(1, 1, 100);
+assert.strictEqual(repeatModel.GetCellValue(1, 1), 100);
+assert.strictEqual(
+	repeatModel.GetCellValue(1, 0),
+	100,
+	"A1 must recover cleanly to 100 after re-breaking cycle",
+);
+assert.strictEqual(
+	repeatModel.CalculationEngine.CircularFormulas.size,
+	0,
+	"CircularFormulas must be completely clean after re-breaking cycle",
+);
+
+// 9.4: Partial Downstream Recovery (propagates beyond the circular subgraph into normal formulas)
+const partialModel = new SpreadsheetModel();
+partialModel.CreateBlank("PartialSheet", 5, 5);
+
+// Establish 3-cell cycle: A1 = =B1, B1 = =C1, C1 = =A1
+partialModel.SetCell(1, 0, "=B1");
+partialModel.SetCell(1, 1, "=C1");
+partialModel.SetCell(1, 2, "=A1");
+
+// Normal downstream formula depending on circular node C1
+partialModel.SetCell(1, 3, "=C1"); // D1 = =C1
+assert.ok(
+	typeof partialModel.GetCellValue(1, 3) === "string" &&
+		partialModel.GetCellValue(1, 3).startsWith("#"),
+	"D1 must be in error/circular state before cycle is broken",
+);
+
+// Break cycle at root: A1 = 10
+const partialLog = [];
+partialModel.AddListener((e) => partialLog.push(e));
+
+partialModel.SetCell(1, 0, 10);
+
+assert.strictEqual(
+	partialLog.length,
+	1,
+	"Partial recovery must emit exactly 1 cellsChanged event",
+);
+assert.strictEqual(partialModel.GetCellValue(1, 0), 10, "A1 must be 10");
+assert.strictEqual(partialModel.GetCellValue(1, 1), 10, "B1 must be 10");
+assert.strictEqual(partialModel.GetCellValue(1, 2), 10, "C1 must be 10");
+assert.strictEqual(
+	partialModel.GetCellValue(1, 3),
+	10,
+	"D1 must automatically evaluate to 10 (recovery propagated downstream)",
+);
+assert.strictEqual(
+	partialModel.CalculationEngine.CircularFormulas.size,
+	0,
+	"CircularFormulas must be empty after partial recovery",
+);
+
+// 9.5: Normal DAG Regression (verifies regular DAG remains a DAG with 0 circular cells)
+const dagModel = new SpreadsheetModel();
+dagModel.CreateBlank("DagSheet", 5, 5);
+
+// A1 = 10, B1 = =A1, C1 = =B1, D1 = =A1, E1 = =C1 + D1
+dagModel.SetCell(1, 0, 10);
+dagModel.SetCell(1, 1, "=A1");
+dagModel.SetCell(1, 2, "=B1");
+dagModel.SetCell(1, 3, "=A1");
+dagModel.SetCell(1, 4, "=C1 + D1");
+
+assert.strictEqual(dagModel.GetCellValue(1, 0), 10);
+assert.strictEqual(dagModel.GetCellValue(1, 1), 10);
+assert.strictEqual(dagModel.GetCellValue(1, 2), 10);
+assert.strictEqual(dagModel.GetCellValue(1, 3), 10);
+assert.strictEqual(dagModel.GetCellValue(1, 4), 20);
+assert.strictEqual(
+	dagModel.CalculationEngine.CircularFormulas.size,
+	0,
+	"DAG must have 0 circular formulas",
+);
+
+// Mutate A1 = 20 -> verify propagation to E1 = 40 in 1 event
+const dagLog = [];
+dagModel.AddListener((e) => dagLog.push(e));
+dagModel.SetCell(1, 0, 20);
+
+assert.strictEqual(dagLog.length, 1);
+assert.strictEqual(dagLog[0].cells.length, 5, "All 5 cells in DAG must update");
+assert.strictEqual(dagModel.GetCellValue(1, 4), 40, "E1 must evaluate to 40");
+
 console.log(
-	"   ✅ 3-Cell circular cycle correctly diagnosed and automatically recovered upon breaking.\n",
+	"   ✅ 2-cell, 3-cell, and repeated cycle/break/re-cycle/break cycles fully verified with automatic recovery.\n",
+	"   ✅ 2-cell, 3-cell, repeated cycle, partial downstream recovery, and DAG regression fully verified.\n",
 );
 
 // -----------------------------------------------------------------------------

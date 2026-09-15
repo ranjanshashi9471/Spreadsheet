@@ -8,6 +8,12 @@
  *
  * Zero DOM dependencies.
  * Strictly follows PascalCase for all properties and methods.
+ *
+ * Canonical Cell Key Invariant:
+ * - All keys stored internally in Precedents, Dependents, and RangeDependencies are canonical
+ *   (trimmed, uppercase strings, e.g. "A1", "C10").
+ * - Public entry points normalize keys upon entry; internal graph operations preserve
+ *   canonical keys without redundant re-normalization.
  */
 
 // Universal import for ReferenceResolver (Browser global fallback / Node CommonJS)
@@ -90,11 +96,13 @@ class DependencyGraph {
 		}
 
 		// 2. Range dependents whose bounding box contains cellKey
-		const coords = this.Resolver.CellKeyToCoords(upperKey);
-		if (coords) {
-			for (const rangeDep of this.RangeDependencies) {
-				if (rangeDep.ContainsCell(coords.ColKey, coords.RowKey)) {
-					result.add(rangeDep.DependentCell);
+		if (this.RangeDependencies.length > 0) {
+			const coords = this.Resolver.CellKeyToCoords(upperKey);
+			if (coords) {
+				for (const rangeDep of this.RangeDependencies) {
+					if (rangeDep.ContainsCell(coords.ColKey, coords.RowKey)) {
+						result.add(rangeDep.DependentCell);
+					}
 				}
 			}
 		}
@@ -326,8 +334,9 @@ class DependencyGraph {
 		const queue = [...changed, ...includeFormulas];
 		const visited = new Set();
 
-		while (queue.length > 0) {
-			const current = queue.shift();
+		let queueHead = 0;
+		while (queueHead < queue.length) {
+			const current = queue[queueHead++];
 			if (visited.has(current)) {
 				continue;
 			}
@@ -367,10 +376,11 @@ class DependencyGraph {
 			}
 		}
 
-		// 4. Process in topological order
+		// 4. Process in topological order using head-index pointer
 		const order = [];
-		while (readyQueue.length > 0) {
-			const current = readyQueue.shift();
+		let readyHead = 0;
+		while (readyHead < readyQueue.length) {
+			const current = readyQueue[readyHead++];
 			order.push(current);
 
 			const dependents = this.GetDirectDependents(current);
@@ -385,11 +395,13 @@ class DependencyGraph {
 			}
 		}
 
-		// 5. Detect cycles among affected cells
+		// 5. Detect cycles among affected cells using O(1) Set membership
 		const hasCycle = order.length < affected.size;
-		const circularCells = hasCycle
-			? Array.from(affected).filter((c) => !order.includes(c))
-			: [];
+		let circularCells = [];
+		if (hasCycle) {
+			const orderedSet = new Set(order);
+			circularCells = Array.from(affected).filter((c) => !orderedSet.has(c));
+		}
 
 		return {
 			Order: order,
@@ -456,10 +468,11 @@ class DependencyGraph {
 			}
 		}
 
-		// 3. Process in topological order
+		// 3. Process in topological order using head-index pointer
 		const order = [];
-		while (readyQueue.length > 0) {
-			const current = readyQueue.shift();
+		let readyHead = 0;
+		while (readyHead < readyQueue.length) {
+			const current = readyQueue[readyHead++];
 			order.push(current);
 
 			const dependents = this.GetDirectDependents(current);
@@ -474,11 +487,15 @@ class DependencyGraph {
 			}
 		}
 
-		// 4. Detect cycles
+		// 4. Detect cycles using O(1) Set membership
 		const hasCycle = order.length < allFormulaCells.size;
-		const circularCells = hasCycle
-			? Array.from(allFormulaCells).filter((c) => !order.includes(c))
-			: [];
+		let circularCells = [];
+		if (hasCycle) {
+			const orderedSet = new Set(order);
+			circularCells = Array.from(allFormulaCells).filter(
+				(c) => !orderedSet.has(c),
+			);
+		}
 
 		return {
 			Order: order,

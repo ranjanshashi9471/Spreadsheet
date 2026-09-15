@@ -18,11 +18,25 @@
  */
 
 // Universal imports (Browser global fallback / Node CommonJS)
+const { FormulaErrors } =
+	typeof require !== "undefined"
+		? require("./Constants.js")
+		: {
+				FormulaErrors: window.FormulaErrors,
+			};
+
 const { ReferenceResolver: CalcRefResolver } =
 	typeof require !== "undefined"
 		? require("./ReferenceResolver.js")
 		: {
 				ReferenceResolver: window.ReferenceResolver,
+			};
+
+const { FunctionRegistry: CalcRegistry } =
+	typeof require !== "undefined"
+		? require("./FunctionRegistry.js")
+		: {
+				FunctionRegistry: window.FunctionRegistry,
 			};
 
 const { OhmFormulaParser: CalcOhmParser, FormulaParser: CalcBaseParser } =
@@ -63,11 +77,15 @@ const { ErrorNode: CalcErrorNode } =
 
 class CalculationEngine {
 	/**
+	 * Constructs CalculationEngine with strict dependency injection ordering:
+	 * Resolver -> Registry -> Graph(Resolver) -> Evaluator(Registry, Resolver) -> Parser -> Analyzer.
+	 *
 	 * @param {FormulaParser|null} [parser=null]
 	 * @param {FormulaEvaluator|null} [evaluator=null]
 	 * @param {DependencyAnalyzer|null} [analyzer=null]
 	 * @param {DependencyGraph|null} [graph=null]
 	 * @param {ReferenceResolver|null} [resolver=null]
+	 * @param {FunctionRegistry|null} [registry=null]
 	 */
 	constructor(
 		parser = null,
@@ -75,7 +93,22 @@ class CalculationEngine {
 		analyzer = null,
 		graph = null,
 		resolver = null,
+		registry = null,
 	) {
+		this.Resolver =
+			resolver ||
+			(typeof CalcRefResolver !== "undefined" ? new CalcRefResolver() : null);
+		this.Registry =
+			registry ||
+			(typeof CalcRegistry !== "undefined" ? new CalcRegistry() : null);
+		this.Graph =
+			graph ||
+			(typeof CalcGraph !== "undefined" ? new CalcGraph(this.Resolver) : null);
+		this.Evaluator =
+			evaluator ||
+			(typeof CalcEvaluator !== "undefined"
+				? new CalcEvaluator(this.Registry, this.Resolver)
+				: null);
 		this.Parser =
 			parser ||
 			(typeof CalcOhmParser !== "undefined"
@@ -83,17 +116,9 @@ class CalculationEngine {
 				: typeof CalcBaseParser !== "undefined"
 					? new CalcBaseParser()
 					: null);
-		this.Evaluator =
-			evaluator ||
-			(typeof CalcEvaluator !== "undefined" ? new CalcEvaluator() : null);
 		this.Analyzer =
 			analyzer ||
 			(typeof CalcAnalyzer !== "undefined" ? new CalcAnalyzer() : null);
-		this.Graph =
-			graph || (typeof CalcGraph !== "undefined" ? new CalcGraph() : null);
-		this.Resolver =
-			resolver ||
-			(typeof CalcRefResolver !== "undefined" ? new CalcRefResolver() : null);
 		this.FormulaCache = new Map(); // cellKey -> { AST: ASTNode, RawFormula: string }
 		this.CircularFormulas = new Map(); // cellKey -> { AST, RawFormula, Cells, Ranges, RowKey, ColKey, Style }
 	}
@@ -110,6 +135,12 @@ class CalculationEngine {
 	}
 	set evaluator(val) {
 		this.Evaluator = val;
+	}
+	get registry() {
+		return this.Registry;
+	}
+	set registry(val) {
+		this.Registry = val;
 	}
 	get analyzer() {
 		return this.Analyzer;
@@ -207,7 +238,7 @@ class CalculationEngine {
 		try {
 			astNode = this.Parser ? this.Parser.Parse(rawFormula) : null;
 		} catch (err) {
-			astNode = new CalcErrorNode("#ERROR!");
+			astNode = new CalcErrorNode(FormulaErrors.Error);
 		}
 
 		// Check for syntax / parsing error
@@ -216,7 +247,7 @@ class CalculationEngine {
 			this.FormulaCache.delete(cellKey);
 			this.CircularFormulas.delete(cellKey);
 
-			const computedValue = astNode?.ErrorMessage || "#ERROR!";
+			const computedValue = astNode?.ErrorMessage || FormulaErrors.Error;
 			this.#CommitCellToStore(
 				model,
 				rowKey,
@@ -265,7 +296,7 @@ class CalculationEngine {
 				Style: style,
 			});
 
-			const computedValue = "#CIRCULAR!";
+			const computedValue = FormulaErrors.Circular;
 			this.#CommitCellToStore(
 				model,
 				rowKey,
@@ -303,9 +334,9 @@ class CalculationEngine {
 		try {
 			computedValue = this.Evaluator
 				? this.Evaluator.Evaluate(astNode, model)
-				: "#ERROR!";
+				: FormulaErrors.Error;
 		} catch (evalErr) {
-			computedValue = "#ERROR!";
+			computedValue = FormulaErrors.Error;
 		}
 
 		// Commit to storage
@@ -376,13 +407,13 @@ class CalculationEngine {
 					coords.ColKey,
 					raw,
 					style,
-					"#CIRCULAR!",
+					FormulaErrors.Circular,
 				);
 				changedMap.set(circKey, {
 					RowKey: coords.RowKey,
 					ColKey: coords.ColKey,
 					Value: raw,
-					ComputedValue: "#CIRCULAR!",
+					ComputedValue: FormulaErrors.Circular,
 					Style: style,
 				});
 			}
@@ -415,12 +446,12 @@ class CalculationEngine {
 
 			let newComputedValue;
 			if (!astNode || astNode instanceof CalcErrorNode) {
-				newComputedValue = astNode?.ErrorMessage || "#ERROR!";
+				newComputedValue = astNode?.ErrorMessage || FormulaErrors.Error;
 			} else {
 				try {
 					newComputedValue = this.Evaluator.Evaluate(astNode, model);
 				} catch (e) {
-					newComputedValue = "#ERROR!";
+					newComputedValue = FormulaErrors.Error;
 				}
 			}
 
@@ -555,7 +586,7 @@ class CalculationEngine {
 				try {
 					astNode = this.Parser ? this.Parser.Parse(rawFormula) : null;
 				} catch (err) {
-					astNode = new CalcErrorNode("#ERROR!");
+					astNode = new CalcErrorNode(FormulaErrors.Error);
 				}
 
 				if (!astNode || astNode instanceof CalcErrorNode) {
@@ -563,7 +594,7 @@ class CalculationEngine {
 					this.FormulaCache.delete(cellKey);
 					this.CircularFormulas.delete(cellKey);
 
-					const errVal = astNode?.ErrorMessage || "#ERROR!";
+					const errVal = astNode?.ErrorMessage || FormulaErrors.Error;
 					this.#CommitCellToStore(
 						model,
 						rowKey,
@@ -607,14 +638,14 @@ class CalculationEngine {
 							numColKey,
 							rawFormula,
 							style,
-							"#CIRCULAR!",
+							FormulaErrors.Circular,
 						);
 						changedLiteralKeys.push(cellKey);
 						changedMap.set(cellKey, {
 							RowKey: rowKey,
 							ColKey: numColKey,
 							Value: rawFormula,
-							ComputedValue: "#CIRCULAR!",
+							ComputedValue: FormulaErrors.Circular,
 							Style: style,
 						});
 					} else {
@@ -701,7 +732,7 @@ class CalculationEngine {
 					const astNode = this.Parser ? this.Parser.Parse(rawFormula) : null;
 
 					if (!astNode || astNode instanceof CalcErrorNode) {
-						const errVal = astNode?.ErrorMessage || "#ERROR!";
+						const errVal = astNode?.ErrorMessage || FormulaErrors.Error;
 						this.#CommitCellToStore(
 							model,
 							rowKey,
@@ -732,13 +763,13 @@ class CalculationEngine {
 								numColKey,
 								rawFormula,
 								row.style || {},
-								"#CIRCULAR!",
+								FormulaErrors.Circular,
 							);
 							changedMap.set(cellKey, {
 								RowKey: rowKey,
 								ColKey: numColKey,
 								Value: rawFormula,
-								ComputedValue: "#CIRCULAR!",
+								ComputedValue: FormulaErrors.Circular,
 								Style: row.style || {},
 							});
 						} else {
@@ -776,13 +807,13 @@ class CalculationEngine {
 					coords.ColKey,
 					raw,
 					style,
-					"#CIRCULAR!",
+					FormulaErrors.Circular,
 				);
 				changedMap.set(circKey, {
 					RowKey: coords.RowKey,
 					ColKey: coords.ColKey,
 					Value: raw,
-					ComputedValue: "#CIRCULAR!",
+					ComputedValue: FormulaErrors.Circular,
 					Style: style,
 				});
 			}
@@ -805,9 +836,9 @@ class CalculationEngine {
 			try {
 				computedValue = this.Evaluator
 					? this.Evaluator.Evaluate(cached.AST, model)
-					: "#ERROR!";
+					: FormulaErrors.Error;
 			} catch (e) {
-				computedValue = "#ERROR!";
+				computedValue = FormulaErrors.Error;
 			}
 
 			this.#CommitCellToStore(

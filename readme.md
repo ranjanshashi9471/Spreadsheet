@@ -71,10 +71,14 @@ Arbor enforces two foundational architectural invariants:
   - **Topological Recalculation Order (`GetRecalculationOrder` / `GetFullRecalculationOrder`)**: Uses Kahn's algorithm to compute the exact execution order ($O(V + E)$) so all upstream precedents are evaluated before their dependents.
 - **AST Evaluator (`FormulaEvaluator.js`)**:
   - Tree-walking evaluator with support for arithmetic (`+`, `-`, `*`, `/`, `^`), unary negation/plus, comparison operators (`=`, `<>`, `<`, `<=`, `>`, `>=`), and string concatenation.
-  - **Short-Circuit Evaluation**: `IF(condition, trueBranch, falseBranch)` strictly evaluates only the active branch, safely guarding against division-by-zero or errors in the unselected branch.
-  - **Lazy Error Handling**: `IFERROR(expr, fallback)` evaluates fallback only when the primary expression produces an error token.
+  - **Special Syntactic Forms (Lazy Control Flow)**: In accordance with **Invariant 6**, special forms (`IF`, `IFERROR`) are handled natively with lazy control flow:
+    - `IF(condition, trueBranch, falseBranch)` evaluates only the active branch, avoiding unselected errors (e.g. `IF(TRUE, 10, 1/0)` yields `10`).
+    - `IFERROR(expr, fallback)` evaluates fallback only when the primary expression produces an error token.
+  - Injected with `FunctionRegistry` and `ReferenceResolver` (sharing the exact same resolver instance as `DependencyGraph`).
 - **Function Registry (`FunctionRegistry.js`)**:
-  - Extensible registry pre-loaded with Excel-standard functions: `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, `COUNTA`, `IF`, `IFERROR`, `AND`, `OR`, `NOT`, `TRUE`, `FALSE`. Supports dynamic runtime additions.
+  - **Invariant 6 (Eager Functions Only)**: Contains only eager functions; special forms `IF`/`IFERROR` are completely purged and guarded against shadowing.
+  - **Boundary Arity Validation**: Automatically wraps functions with `MinArgs`/`MaxArgs` verification, uniformly returning `#VALUE!` on arity mismatches.
+  - **Extensible & Introspectable**: Ships with 27 built-in functions across 5 categories (`Math`, `Statistical`, `Logical`, `Text`, `Information`) including spreadsheet floor modulo `MOD`, `POWER`, `PRODUCT`, `ROUND`, `SQRT`, `CONCATENATE`, `TRIM`, `ISNUMBER`, `ISTEXT`, `ISBLANK`, `ISERROR`. Supports runtime registration with frozen metadata.
 - **Calculation Coordinator (`CalculationEngine.js`)**:
   - Integrates the parser, analyzer, DAG, and evaluator with **zero DOM references**.
   - Maintains an internal AST cache (`FormulaCache`) to eliminate redundant re-parsing during reactive cascades.
@@ -232,7 +236,13 @@ No compilation, bundling, or node server is required:
 The entire calculation engine, DAG, and storage stack are verified via Node.js:
 
 ```bash
-# Run the Architectural Decoupling & Invariant Verification suite
+# Run Commit 3 Function Registry & Formula Architecture verification suite
+node scratch/test_function_registry.js
+
+# Run Commit 2 Dependency Graph Performance benchmark suite
+node scratch/test_graph_perf.js
+
+# Run Commit 1 Architectural Decoupling & Invariant Verification suite
 node scratch/test_decoupling.js
 
 # Run the complete Phase 7 test suite (includes regression across all slices)

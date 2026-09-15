@@ -767,6 +767,7 @@ assert.strictEqual(
 	circ3Model.GetCellValue(1, 2),
 	"#CIRCULAR!",
 	"C1 must evaluate to #CIRCULAR!",
+);
 // Invariant: Affected circular formulas cannot produce a normal numeric result
 assert.ok(
 	typeof circ3Model.GetCellValue(1, 2) === "string" &&
@@ -777,6 +778,7 @@ assert.strictEqual(
 	circ3Model.GetCellValue(1, 1),
 	"#CIRCULAR!",
 	"B1 must evaluate to #CIRCULAR!",
+);
 assert.ok(
 	typeof circ3Model.GetCellValue(1, 1) === "string" &&
 		circ3Model.GetCellValue(1, 1).startsWith("#"),
@@ -902,6 +904,65 @@ assert.strictEqual(
 	partialModel.CalculationEngine.CircularFormulas.size,
 	0,
 	"CircularFormulas must be empty after partial recovery",
+);
+
+// Explicit Graph Topology Invariant Verification:
+// Recovery must restore graph edges, not just computed values:
+// A1 -> C1 (since C1 = =A1), C1 -> B1 (since B1 = =C1), C1 -> D1 (since D1 = =C1)
+const partialGraph = partialModel.CalculationEngine.Graph;
+assert.ok(
+	partialGraph.Dependents.get("A1")?.has("C1"),
+	"Graph must maintain A1 -> C1 dependent edge after recovery",
+);
+assert.ok(
+	partialGraph.Dependents.get("C1")?.has("B1"),
+	"Graph must maintain C1 -> B1 dependent edge after recovery",
+);
+assert.ok(
+	partialGraph.Dependents.get("C1")?.has("D1"),
+	"Graph must maintain C1 -> D1 dependent edge after recovery",
+);
+assert.ok(
+	partialGraph.Precedents.get("C1")?.has("A1"),
+	"Graph must maintain C1 precedent on A1 after recovery",
+);
+assert.ok(
+	partialGraph.Precedents.get("B1")?.has("C1"),
+	"Graph must maintain B1 precedent on C1 after recovery",
+);
+assert.ok(
+	partialGraph.Precedents.get("D1")?.has("C1"),
+	"Graph must maintain D1 precedent on C1 after recovery",
+);
+assert.strictEqual(
+	partialGraph.Precedents.get("A1")?.size ?? 0,
+	0,
+	"A1 must have 0 precedents since it is now a literal value",
+);
+
+// Subsequent mutation test: verify the restored topology cascades on subsequent updates
+partialLog.length = 0;
+partialModel.SetCell(1, 0, 25);
+assert.strictEqual(
+	partialLog.length,
+	1,
+	"Subsequent mutation must emit 1 event",
+);
+assert.strictEqual(partialModel.GetCellValue(1, 0), 25, "A1 must be 25");
+assert.strictEqual(
+	partialModel.GetCellValue(1, 2),
+	25,
+	"C1 must update to 25 via restored graph",
+);
+assert.strictEqual(
+	partialModel.GetCellValue(1, 1),
+	25,
+	"B1 must update to 25 via restored graph",
+);
+assert.strictEqual(
+	partialModel.GetCellValue(1, 3),
+	25,
+	"D1 must update to 25 via restored graph",
 );
 
 // 9.5: Normal DAG Regression (verifies regular DAG remains a DAG with 0 circular cells)

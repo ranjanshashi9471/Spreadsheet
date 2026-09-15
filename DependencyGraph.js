@@ -10,10 +10,10 @@
  * Strictly follows PascalCase for all properties and methods.
  *
  * Canonical Cell Key Invariant:
- * - All keys stored internally in Precedents, Dependents, and RangeDependencies are canonical
- *   (trimmed, uppercase strings, e.g. "A1", "C10").
- * - Public entry points normalize keys upon entry; internal graph operations preserve
- *   canonical keys without redundant re-normalization.
+ * - Public graph entry points normalize keys (trimmed, uppercase strings, e.g. "A1", "C10").
+ * - Internal graph state (Precedents, Dependents, RangeDependencies) stores canonical keys.
+ * - Internal methods currently normalize at their public boundaries, even when callers already
+ *   provide canonical keys (deferred future optimization: dedicated internal fast paths).
  */
 
 // Universal import for ReferenceResolver (Browser global fallback / Node CommonJS)

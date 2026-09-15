@@ -399,7 +399,7 @@ In a diamond dependency graph:
 All internal graph structures (`AdjacencyList`, `ReverseAdjacencyList`, `InDegrees`, `RangeDependencies`) strictly store cell coordinates as trimmed, uppercase strings (e.g. `"A1"`, `"C25"`).
 
 - **Public Entry Normalization**: All external entry points (`SetDependencies`, `WouldCreateCycle`, `GetDirectDependents`, `GetRecalculationOrder`) normalize inputs at the boundary.
-- **Zero Repetitive Overhead**: Internal traversal algorithms, BFS queues, and cycle verification operate exclusively on pre-normalized canonical keys without redundant string transformations.
+- **Internal Storage Contract**: Internal graph state stores canonical keys. Internal methods currently normalize at their public boundaries even when callers already supply canonical keys (future internal fast paths can separate public API from internal canonical operations to eliminate any redundant normalization).
 
 #### Algorithmic Optimizations
 
@@ -415,20 +415,21 @@ All internal graph structures (`AdjacencyList`, `ReverseAdjacencyList`, `InDegre
 
 #### Operation Complexity Matrix
 
-| Operation                              | Time Complexity                             | Auxiliary Space | Key Mechanics & Invariants                                                                                                                     |
-| :------------------------------------- | :------------------------------------------ | :-------------- | :--------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GetRecalculationOrder(changedKeys)`   | $O(V_{sub} + E_{sub} + V_{sub} \cdot R)$    | $O(V_{sub})$    | Affected subgraph discovery (BFS) + Kahn's topological sort using pointer-based head queues. Reducible to $O(V_{sub} + E_{sub})$ when $R = 0$. |
-| `GetDirectDependents(cellKey)`         | $O(D + R)$                                  | $O(D)$          | $D$ direct point dependents + $R$ range bounding-box intersections. Range check is bypassed when $R = 0$.                                      |
-| `WouldCreateCycle(target, precedents)` | $O(V_{down} + E_{down} + V_{down} \cdot R)$ | $O(V_{down})$   | Non-destructive DFS on downstream graph. Checks reachability without mutating any graph edges.                                                 |
-| `GetFullRecalculationOrder()`          | $O(V + E)$                                  | $O(V)$          | Sheet-wide Kahn's topological sort across all registered formula cells using pointer queues.                                                   |
+| Operation                              | Time Complexity                             | Auxiliary Space | Key Mechanics & Invariants                                                                                                                                                                                                                         |
+| :------------------------------------- | :------------------------------------------ | :-------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GetRecalculationOrder(changedKeys)`   | $O(V_{sub} + E_{sub} + V_{sub} \cdot R)$    | $O(V_{sub})$    | Affected subgraph discovery (BFS) + Kahn's topological sort using pointer-based head queues. Reducible to $O(V_{sub} + E_{sub})$ when $R = 0$.                                                                                                     |
+| `GetDirectDependents(cellKey)`         | $O(D + R)$                                  | $O(D)$          | $D$ direct point dependents + $R$ range bounding-box intersections. Range check is bypassed when $R = 0$.                                                                                                                                          |
+| `WouldCreateCycle(target, precedents)` | $O(V_{down} + E_{down} + V_{down} \cdot R)$ | $O(V_{down})$   | Non-destructive DFS on downstream graph. Checks reachability without mutating any graph edges.                                                                                                                                                     |
+| `GetFullRecalculationOrder()`          | $O(V + E + V \cdot R)$                      | $O(V)$          | Sheet-wide Kahn's topological sort across all registered formula cells using pointer queues. For each formula cell, dependent resolution invokes `GetDirectDependents` which scans $R$ range bounding-boxes. Reducible to $O(V + E)$ when $R = 0$. |
 
 > [!NOTE]
 > **Known Optimization Target (Range Dependency Indexing)**:
 > In sheets with extensive range formulas (e.g. 500+ `SUM(A1:D100)` ranges), $R$ bounding-box scans run linearly in $O(R)$. Future performance refactors will introduce a 2D spatial interval index (R-Tree / 2D bounding-box grid) to reduce range intersection queries from $O(R)$ to $O(\log R + k)$.
 
-#### Empirical Benchmark Baseline (`scratch/test_graph_perf.js`)
+#### Reference Benchmark Baseline (`scratch/test_graph_perf.js`)
 
-Performance verified across 6 architectural topologies using high-resolution timers (`performance.now()`, 5 warm-up cycles, 10 measured iterations):
+_Observed on development environment (for regression detection, not contractual SLA guarantees)_:
+Using high-resolution timers (`performance.now()`, 5 warm-up cycles, 10–15 measured iterations):
 
 | Topology / Benchmark                                       | Scale (Nodes / Edges)                                                       | Average Recalculation Time                                    | Topological Correctness                                                                  |
 | :--------------------------------------------------------- | :-------------------------------------------------------------------------- | :------------------------------------------------------------ | :--------------------------------------------------------------------------------------- |
@@ -546,6 +547,163 @@ model.RestoreCells(this.CellEntries);
    - Runs Kahn's topological sort once across the entire union of affected cells.
    - Evaluates each cell in exact topological order and commits the result to storage.
    - Returns a single, complete mutation delta array containing all restored cells and affected dependents.
+
+---
+
+## 6. Formula Architecture & Function Registry Deep Dive
+
+### Architectural Separation: Special Forms vs Function Registry
+
+The Arbor formula execution engine maintains a strict architectural boundary between **eager mathematical/statistical functions** and **special syntactic forms with custom control flow**:
+
+```
+                         CalculationEngine
+                                │
+             ┌──────────────────┴──────────────────┐
+             │                                     │
+      ReferenceResolver                     FunctionRegistry
+             │                                     │
+       ┌─────┴─────┐                               │
+       │           │                               │
+       ▼           ▼                               ▼
+DependencyGraph  FormulaEvaluator ◄──────── Eager Functions Only (Invariant 6)
+                       │
+                       └──── Special Forms (Lazy Control Flow)
+                            ├── IF
+                            └── IFERROR
+```
+
+#### Invariant 6: FunctionRegistry Contains Eager Functions Only
+
+Standard spreadsheet functions (such as `SUM`, `AVERAGE`, `ROUND`, `SQRT`) evaluate their arguments **eagerly** before invocation. In contrast, special forms like `IF` and `IFERROR` alter execution control flow:
+
+- `IF(condition, trueBranch, falseBranch)` evaluates `trueBranch` if and only if `condition` evaluates to truthy; the other branch is **never evaluated**, avoiding computational expense, unselected error conditions, or invalid downstream traps (e.g. `IF(TRUE, 10, 1/0)` yields `10`, not `#DIV/0!`).
+- `IFERROR(primary, fallback)` evaluates `fallback` if and only if `primary` evaluates to an error token (e.g. `IFERROR(50, 1/0)` yields `50`).
+
+To enforce this boundary:
+
+1. `IF` and `IFERROR` are completely purged from `FunctionRegistry.js`.
+2. `FormulaEvaluator.js` intercepts special forms natively via `FormulaSpecialForms.has(name)` and executes them using specialized private routines (`EvaluateIf`, `EvaluateIfError`).
+3. `FunctionRegistry.RegisterFunction(name, fn)` explicitly checks `FormulaSpecialForms.has(normalizedName)` and throws an informative Error if a caller attempts to register or shadow `IF` or `IFERROR`.
+
+---
+
+### Decoupled Shared Language Constants (`Constants.js`)
+
+To prevent circular module dependencies (`FunctionRegistry -> FormulaEvaluator -> FunctionRegistry`), all formula error tokens, special-form identifiers, and error type predicates are centralized in [`Constants.js`](file:///home/shashi/Desktop/WorkingArea/Spreadsheet/Constants.js):
+
+- **`FormulaErrors`**:
+  ```javascript
+  const FormulaErrors = Object.freeze({
+  	Error: "#ERROR!",
+  	Value: "#VALUE!",
+  	Ref: "#REF!",
+  	Name: "#NAME?",
+  	DivZero: "#DIV/0!",
+  	Circular: "#CIRCULAR!",
+  	Num: "#NUM!",
+  	NA: "#N/A",
+  });
+  ```
+- **`FormulaSpecialForms`**:
+  ```javascript
+  const FormulaSpecialForms = Object.freeze(new Set(["IF", "IFERROR"]));
+  ```
+- **`IsFormulaError(value)`**:
+  ```javascript
+  function IsFormulaError(value) {
+  	return typeof value === "string" && value.startsWith("#");
+  }
+  ```
+
+Both `FunctionRegistry` and `FormulaEvaluator` import from `Constants.js`. Neither imports the other, ensuring zero circular dependencies.
+
+---
+
+### Dependency Injection & Construction Sequencing
+
+Components in the calculation pipeline are constructed in strict topological dependency sequence:
+
+1. `this.Resolver = resolver || new ReferenceResolver()`
+2. `this.Registry = registry || new FunctionRegistry()`
+3. `this.Graph = graph || new DependencyGraph(this.Resolver)`
+4. `this.Evaluator = evaluator || new FormulaEvaluator(this.Registry, this.Resolver)`
+5. `this.Parser = parser || new OhmFormulaParser()`
+6. `this.Analyzer = analyzer || new DependencyAnalyzer()`
+
+#### The Shared ReferenceResolver Invariant
+
+Notice that `DependencyGraph` and `FormulaEvaluator` are injected with the **exact same** `ReferenceResolver` instance:
+
+```javascript
+assert.strictEqual(engine.Evaluator.Resolver, engine.Graph.Resolver);
+```
+
+This guarantees that cell key normalizations, coordinate-to-key transformations, and range intersections are 100% consistent between dependency tracking and formula evaluation.
+
+#### Positional Backward Compatibility & Deprecated Singleton
+
+- The `CalculationEngine` constructor appends `registry = null` at the end:
+  ```javascript
+  constructor(
+  	(parser = null),
+  	(evaluator = null),
+  	(analyzer = null),
+  	(graph = null),
+  	(resolver = null),
+  	(registry = null),
+  );
+  ```
+  This guarantees that legacy callers and test harnesses passing positional arguments (`(null, null, null, null, customResolver)`) remain 100% intact.
+- `FunctionRegistry.Instance` is retained strictly as a `@deprecated` fallback for legacy code, while production execution paths use dependency-injected instances.
+
+---
+
+### Boundary Arity Validation & Metadata Introspection
+
+In `FunctionRegistry.RegisterFunction(name, fn, metadata = {})`:
+
+1. **Boundary Arity Wrapper**: Wraps `fn` in a boundary closure enforcing `MinArgs` and `MaxArgs`. If fewer or more arguments are passed, it immediately returns `FormulaErrors.Value` (`#VALUE!`) without executing `fn`. This applies to both AST evaluation and direct `registry.GetFunction(name)(...)` invocations.
+2. **Frozen Metadata**: Stores metadata as a frozen object: `this.Metadata.set(upper, Object.freeze({ ...metadata }))`.
+3. **Introspection API**:
+   - `registry.GetMetadata(name)`: Returns the frozen metadata descriptor or `null`.
+   - `registry.ListFunctions(category = null)`: Returns a sorted array of uppercase function names, optionally filtered by category (e.g. `registry.ListFunctions("Math")`).
+
+---
+
+### Built-in Function Reference Matrix
+
+Arbor ships with 27 built-in eager functions across 5 categories, strictly enforcing spreadsheet semantics:
+
+| Category        | Function                  | MinArgs | MaxArgs  | Return Type | Semantics & Behaviors                                                                                           |
+| :-------------- | :------------------------ | :-----: | :------: | :---------- | :-------------------------------------------------------------------------------------------------------------- |
+| **Math**        | `ABS(number)`             |    1    |    1     | `number`    | Returns absolute value; non-numbers yield `#VALUE!`.                                                            |
+| **Math**        | `INT(number)`             |    1    |    1     | `number`    | Rounds down to the nearest integer (`Math.floor(n)`).                                                           |
+| **Math**        | `MOD(number, divisor)`    |    2    |    2     | `number`    | **Spreadsheet Floor Modulo**: `n - d * Math.floor(n / d)`. `MOD(-10, 3) = 2`. Divisor 0 yields `#DIV/0!`.       |
+| **Math**        | `POWER(base, exp)`        |    2    |    2     | `number`    | Computes $base^{exp}$. $0^{negative}$ yields `#DIV/0!`; invalid real roots yield `#NUM!`.                       |
+| **Math**        | `PRODUCT(...args)`        |    1    | $\infty$ | `number`    | Multiplies numbers; non-numeric values in ranges are ignored; scalar text yields `#VALUE!`.                     |
+| **Math**        | `ROUND(number, [digits])` |    1    |    2     | `number`    | Standard decimal rounding using $10^{digits}$ factor. Supports negative digits (e.g. `ROUND(1234, -2) = 1200`). |
+| **Math**        | `SQRT(number)`            |    1    |    1     | `number`    | Positive square root. Negative arguments yield `#NUM!`.                                                         |
+| **Math**        | `SUM(...args)`            |    1    | $\infty$ | `number`    | Sum of all numbers. Blanks and text in ranges are ignored; scalar text yields `#VALUE!`.                        |
+| **Statistical** | `AVERAGE(...args)`        |    1    | $\infty$ | `number`    | Arithmetic mean of numeric values. Zero count yields `#DIV/0!`.                                                 |
+| **Statistical** | `COUNT(...args)`          |    1    | $\infty$ | `number`    | Count of numbers across scalar arguments and ranges.                                                            |
+| **Statistical** | `COUNTA(...args)`         |    1    | $\infty$ | `number`    | Count of non-empty values across scalar arguments and ranges.                                                   |
+| **Statistical** | `MAX(...args)`            |    1    | $\infty$ | `number`    | Maximum numeric value; returns 0 if empty.                                                                      |
+| **Statistical** | `MIN(...args)`            |    1    | $\infty$ | `number`    | Minimum numeric value; returns 0 if empty.                                                                      |
+| **Logical**     | `AND(...args)`            |    1    | $\infty$ | `boolean`   | Returns `true` if all arguments are truthy; ignores empty range cells.                                          |
+| **Logical**     | `FALSE()`                 |    0    |    0     | `boolean`   | Returns logical constant `false`.                                                                               |
+| **Logical**     | `NOT(val)`                |    1    |    1     | `boolean`   | Inverts logical value. Enforces single-argument arity.                                                          |
+| **Logical**     | `OR(...args)`             |    1    | $\infty$ | `boolean`   | Returns `true` if any argument is truthy; ignores empty range cells.                                            |
+| **Logical**     | `TRUE()`                  |    0    |    0     | `boolean`   | Returns logical constant `true`.                                                                                |
+| **Text**        | `CONCATENATE(...args)`    |    1    | $\infty$ | `string`    | Joins text representations of scalar and range arguments; propagates errors immediately.                        |
+| **Text**        | `LEN(text)`               |    1    |    1     | `number`    | String length of scalar argument.                                                                               |
+| **Text**        | `LOWER(text)`             |    1    |    1     | `string`    | Converts text to lowercase.                                                                                     |
+| **Text**        | `TRIM(text)`              |    1    |    1     | `string`    | Removes leading, trailing, and multiple consecutive whitespace characters.                                      |
+| **Text**        | `UPPER(text)`             |    1    |    1     | `string`    | Converts text to uppercase.                                                                                     |
+| **Information** | `ISBLANK(val)`            |    1    |    1     | `boolean`   | Returns `true` if cell or value is `null`, `undefined`, or `""`.                                                |
+| **Information** | `ISERROR(val)`            |    1    |    1     | `boolean`   | Returns `true` if value is an error token (e.g. `#DIV/0!`, `#VALUE!`).                                          |
+| **Information** | `ISNUMBER(val)`           |    1    |    1     | `boolean`   | Returns `true` if value is numeric (`typeof val === "number"`). Text numbers yield `false`.                     |
+| **Information** | `ISTEXT(val)`             |    1    |    1     | `boolean`   | Returns `true` if value is a string and not an error token.                                                     |
 
 ---
 
@@ -686,27 +844,31 @@ Column keys can be 0-based integers (`0`, `1`, `2`) or Excel letter names (`"A"`
 
 Arbor maintains automated test suites in the `scratch/` directory:
 
-| Test Suite                       | Purpose                                                                                                                                                                       |
-| :------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`scratch/test_graph_perf.js`** | **Commit 2 Verification**: Benchmarks Kahn's algorithm traversal and cycle detection across linear chains (1,000 cells), diamond DAGs, wide fan-outs, and binary trees.       |
-| **`scratch/test_decoupling.js`** | **Commit 1 Verification**: Enforces Zero-DOM static boundaries, Single-Notification transactions, diamond DAG duplicate convergence, nested batching, and renderer lifecycle. |
-| **`scratch/test_slice9.js`**     | Calculation engine, reactive cascading, error propagation, cycle recovery, and full regression across slices 1-8.                                                             |
-| **`scratch/test_slice8.js`**     | Directed Acyclic Graph (DAG) construction, cycle validation, and Kahn's topological sort.                                                                                     |
-| **`scratch/test_slice7.js`**     | Short-circuit evaluation for `IF`, `IFERROR`, and logical operators (`AND`, `OR`, `NOT`).                                                                                     |
-| **`scratch/test_slice6.js`**     | Comparison operators (`=`, `<>`, `<`, `<=`, `>`, `>=`) and boolean evaluation.                                                                                                |
-| **`scratch/test_slice4.js`**     | 2D rectangular ranges and aggregate functions (`SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, `COUNTA`).                                                                            |
-| **`scratch/test_slice3.js`**     | Exponentiation (`^`) right-associativity and unary operator precedence.                                                                                                       |
-| **`scratch/test_slice2.js`**     | Cell reference resolution and coordinate transformation mapping.                                                                                                              |
-| **`scratch/test_slice1.js`**     | Basic arithmetic expressions and operator precedence (`+`, `-`, `*`, `/`).                                                                                                    |
-| **`scratch/test_db_save.js`**    | SQLite WebAssembly persistence, bulk serialization, and schema provisioning.                                                                                                  |
+| Test Suite                              | Purpose                                                                                                                                                                                                                                                      |
+| :-------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`scratch/test_function_registry.js`** | **Commit 3 Verification**: Enforces Invariant 6 (eager functions only), special-form shadowing protection & lazy control flow, DI isolation, shared resolver invariant, boundary arity validation, frozen metadata, and complete built-in library semantics. |
+| **`scratch/test_graph_perf.js`**        | **Commit 2 Verification**: Benchmarks Kahn's algorithm traversal and cycle detection across linear chains (1,000 cells), diamond DAGs, wide fan-outs, and binary trees.                                                                                      |
+| **`scratch/test_decoupling.js`**        | **Commit 1 Verification**: Enforces Zero-DOM static boundaries, Single-Notification transactions, diamond DAG duplicate convergence, nested batching, and renderer lifecycle.                                                                                |
+| **`scratch/test_slice9.js`**            | Calculation engine, reactive cascading, error propagation, cycle recovery, and full regression across slices 1-8.                                                                                                                                            |
+| **`scratch/test_slice8.js`**            | Directed Acyclic Graph (DAG) construction, cycle validation, and Kahn's topological sort.                                                                                                                                                                    |
+| **`scratch/test_slice7.js`**            | Short-circuit evaluation for `IF`, `IFERROR`, and logical operators (`AND`, `OR`, `NOT`).                                                                                                                                                                    |
+| **`scratch/test_slice6.js`**            | Comparison operators (`=`, `<>`, `<`, `<=`, `>`, `>=`) and boolean evaluation.                                                                                                                                                                               |
+| **`scratch/test_slice4.js`**            | 2D rectangular ranges and aggregate functions (`SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, `COUNTA`).                                                                                                                                                           |
+| **`scratch/test_slice3.js`**            | Exponentiation (`^`) right-associativity and unary operator precedence.                                                                                                                                                                                      |
+| **`scratch/test_slice2.js`**            | Cell reference resolution and coordinate transformation mapping.                                                                                                                                                                                             |
+| **`scratch/test_slice1.js`**            | Basic arithmetic expressions and operator precedence (`+`, `-`, `*`, `/`).                                                                                                                                                                                   |
+| **`scratch/test_db_save.js`**           | SQLite WebAssembly persistence, bulk serialization, and schema provisioning.                                                                                                                                                                                 |
 
 To run the entire suite:
 
 ```bash
-# Verify graph performance and benchmarks (Commit 2)
+# Verify Commit 3: Function registry, formula architecture, and built-in library
+node scratch/test_function_registry.js
+
+# Verify Commit 2: Graph performance and benchmarks
 node scratch/test_graph_perf.js
 
-# Verify architectural boundaries and invariants (Commit 1)
+# Verify Commit 1: Architectural boundaries and invariants
 node scratch/test_decoupling.js
 
 # Verify calculation engine and full regression

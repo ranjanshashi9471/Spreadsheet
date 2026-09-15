@@ -5,8 +5,22 @@
  * Traverses pure ASTNode data structures and calculates numeric/computed outcomes.
  * Decoupled from parsing, tokenization, and DOM presentation.
  *
+ * Enforces Invariant 6: Special syntactic forms (IF, IFERROR) are evaluated
+ * directly with custom lazy control flow, while standard functions are dispatched
+ * to the injected FunctionRegistry.
+ *
  * Strictly follows PascalCase for all properties and methods.
  */
+
+// Universal import for Constants (Browser global fallback / Node CommonJS)
+const { FormulaErrors, FormulaSpecialForms, IsFormulaError } =
+	typeof require !== "undefined"
+		? require("./Constants.js")
+		: {
+				FormulaErrors: window.FormulaErrors,
+				FormulaSpecialForms: window.FormulaSpecialForms,
+				IsFormulaError: window.IsFormulaError,
+			};
 
 // Universal import for AST Nodes (Browser global fallback / Node CommonJS)
 const {
@@ -52,15 +66,35 @@ const { FunctionRegistry } =
 
 class FormulaEvaluator {
 	/**
-	 * @param {FunctionRegistry|null} [registry=null]
+	 * Built-in special syntactic forms handled directly by the evaluator.
 	 */
-	constructor(registry = null) {
+	static SpecialForms = FormulaSpecialForms;
+
+	/**
+	 * @param {FunctionRegistry|null} [registry=null]
+	 * @param {ReferenceResolver|null} [resolver=null]
+	 */
+	constructor(registry = null, resolver = null) {
 		this.Registry =
 			registry ||
-			(typeof FunctionRegistry !== "undefined"
-				? FunctionRegistry.Instance
+			(typeof FunctionRegistry !== "undefined" ? new FunctionRegistry() : null);
+		this.Resolver =
+			resolver ||
+			(typeof ReferenceResolver !== "undefined"
+				? new ReferenceResolver()
 				: null);
-		this.Resolver = new ReferenceResolver();
+	}
+
+	/**
+	 * Checks whether a function name is a special form.
+	 * @param {string} name
+	 * @returns {boolean}
+	 */
+	IsSpecialForm(name) {
+		if (!name || typeof name !== "string") return false;
+		return (
+			FormulaSpecialForms && FormulaSpecialForms.has(name.trim().toUpperCase())
+		);
 	}
 
 	/**
@@ -115,7 +149,7 @@ class FormulaEvaluator {
 			);
 		}
 
-		return "#ERROR!";
+		return FormulaErrors.Error;
 	}
 
 	/**
@@ -156,7 +190,7 @@ class FormulaEvaluator {
 			return 0;
 		}
 
-		if (typeof val === "string" && val.startsWith("#")) {
+		if (IsFormulaError(val)) {
 			return val;
 		}
 
@@ -251,35 +285,35 @@ class FormulaEvaluator {
 	}
 
 	/**
-	 * Evaluates a function call ASTNode using the registered function implementations.
+	 * Evaluates a function call ASTNode.
+	 * Dispatches special syntactic forms (IF, IFERROR) natively with lazy control flow,
+	 * and delegates standard eager functions to the registered function library.
 	 * @param {FunctionCallNode} functionCallNode
 	 * @param {object|Function|null} context
 	 * @returns {*}
 	 */
 	EvaluateFunctionCall(functionCallNode, context) {
-		const fnName = functionCallNode.FunctionName;
+		const rawName = functionCallNode.FunctionName;
+		const upperName = (rawName || "").trim().toUpperCase();
 
-		// Short-circuiting logical functions: IF and IFERROR
-		if (fnName === "IF") {
-			return this.EvaluateIf(functionCallNode, context);
+		// Short-circuiting logical special forms: IF and IFERROR
+		if (FormulaSpecialForms && FormulaSpecialForms.has(upperName)) {
+			if (upperName === "IF") {
+				return this.EvaluateIf(functionCallNode, context);
+			}
+			if (upperName === "IFERROR") {
+				return this.EvaluateIfError(functionCallNode, context);
+			}
 		}
-		if (fnName === "IFERROR") {
-			return this.EvaluateIfError(functionCallNode, context);
-		}
 
-		const registry =
-			this.Registry ||
-			(typeof FunctionRegistry !== "undefined"
-				? FunctionRegistry.Instance
-				: null);
-
+		const registry = this.Registry;
 		if (!registry) {
-			return "#NAME?";
+			return FormulaErrors.Name;
 		}
 
-		const fn = registry.GetFunction(fnName);
+		const fn = registry.GetFunction(upperName);
 		if (!fn) {
-			return "#NAME?";
+			return FormulaErrors.Name;
 		}
 
 		const evaluatedArgs = [];
@@ -296,7 +330,7 @@ class FormulaEvaluator {
 		try {
 			return fn(...evaluatedArgs);
 		} catch (err) {
-			return "#ERROR!";
+			return FormulaErrors.Error;
 		}
 	}
 
@@ -310,11 +344,11 @@ class FormulaEvaluator {
 	EvaluateIf(functionCallNode, context) {
 		const args = functionCallNode.Arguments;
 		if (args.length < 2 || args.length > 3) {
-			return "#VALUE!";
+			return FormulaErrors.Value;
 		}
 
 		const condVal = this.Evaluate(args[0], context);
-		if (typeof condVal === "string" && condVal.startsWith("#")) {
+		if (IsFormulaError(condVal)) {
 			return condVal;
 		}
 
@@ -340,11 +374,11 @@ class FormulaEvaluator {
 	EvaluateIfError(functionCallNode, context) {
 		const args = functionCallNode.Arguments;
 		if (args.length !== 2) {
-			return "#VALUE!";
+			return FormulaErrors.Value;
 		}
 
 		const primaryVal = this.Evaluate(args[0], context);
-		if (typeof primaryVal === "string" && primaryVal.startsWith("#")) {
+		if (IsFormulaError(primaryVal)) {
 			return this.Evaluate(args[1], context);
 		}
 
@@ -364,7 +398,7 @@ class FormulaEvaluator {
 			return { Value: val !== 0 };
 		}
 		if (typeof val === "string") {
-			if (val.startsWith("#")) {
+			if (IsFormulaError(val)) {
 				return { Error: val };
 			}
 			const upper = val.trim().toUpperCase();
@@ -378,9 +412,9 @@ class FormulaEvaluator {
 			if (!Number.isNaN(num)) {
 				return { Value: num !== 0 };
 			}
-			return { Error: "#VALUE!" };
+			return { Error: FormulaErrors.Value };
 		}
-		return { Error: "#VALUE!" };
+		return { Error: FormulaErrors.Value };
 	}
 
 	/**
@@ -428,13 +462,13 @@ class FormulaEvaluator {
 		const operandVal = this.Evaluate(operandNode, context);
 
 		// If operand is an error token, propagate it
-		if (typeof operandVal === "string" && operandVal.startsWith("#")) {
+		if (IsFormulaError(operandVal)) {
 			return operandVal;
 		}
 
 		const num = Number(operandVal);
 		if (Number.isNaN(num)) {
-			return "#VALUE!";
+			return FormulaErrors.Value;
 		}
 
 		if (operator === "-") {
@@ -444,7 +478,7 @@ class FormulaEvaluator {
 			return +num;
 		}
 
-		return "#ERROR!";
+		return FormulaErrors.Error;
 	}
 
 	/**
@@ -457,12 +491,12 @@ class FormulaEvaluator {
 	 */
 	EvaluateBinaryOp(operator, leftNode, rightNode, context) {
 		const leftVal = this.Evaluate(leftNode, context);
-		if (typeof leftVal === "string" && leftVal.startsWith("#")) {
+		if (IsFormulaError(leftVal)) {
 			return leftVal;
 		}
 
 		const rightVal = this.Evaluate(rightNode, context);
-		if (typeof rightVal === "string" && rightVal.startsWith("#")) {
+		if (IsFormulaError(rightVal)) {
 			return rightVal;
 		}
 
@@ -487,7 +521,7 @@ class FormulaEvaluator {
 		const rightNum = Number(rightVal);
 
 		if (Number.isNaN(leftNum) || Number.isNaN(rightNum)) {
-			return "#VALUE!";
+			return FormulaErrors.Value;
 		}
 
 		switch (operator) {
@@ -499,21 +533,21 @@ class FormulaEvaluator {
 				return leftNum * rightNum;
 			case "/":
 				if (rightNum === 0) {
-					return "#DIV/0!";
+					return FormulaErrors.DivZero;
 				}
 				return leftNum / rightNum;
 			case "^": {
 				if (leftNum === 0 && rightNum < 0) {
-					return "#DIV/0!";
+					return FormulaErrors.DivZero;
 				}
 				const powRes = Math.pow(leftNum, rightNum);
 				if (Number.isNaN(powRes) || !Number.isFinite(powRes)) {
-					return "#NUM!";
+					return FormulaErrors.Num;
 				}
 				return powRes;
 			}
 			default:
-				return "#ERROR!";
+				return FormulaErrors.Error;
 		}
 	}
 }

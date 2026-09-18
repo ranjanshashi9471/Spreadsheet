@@ -84,35 +84,83 @@ class BackendService {
 				referringTable = col[2];
 			}
 		});
+		// SQLite PRAGMA foreign_key_list returns:
+		// [id (0), seq (1), table (2), from (3), to (4), on_update (5), on_delete (6), match (7)]
+		// col[2] is the referenced (parent) table
+		// col[3] is the child table column (colname)
+		// col[4] is the parent table column (targetColumn)
+		const matchedFk = foreignKeysResult.find((col) => col[3] === colname);
 
 		if (referringTable !== "") {
 			foreignKeysResult.forEach((col) => {
 				if (col[2] === referringTable && col[3] !== colname) {
 					referringColumns.push(col[3]);
+		if (matchedFk) {
+			const fkId = matchedFk[0];
+			const parentTable = matchedFk[2];
+			let targetColumn = matchedFk[4];
+
+			if (!targetColumn) {
+				const parentInfo = await this.databaseService.RunQuery(
+					`PRAGMA table_info("${parentTable}");`,
+				);
+				if (parentInfo && parentInfo.values) {
+					const pkCol = parentInfo.values.find((c) => c[5] > 0);
+					if (pkCol) {
+						targetColumn = pkCol[1];
+					}
 				}
 			});
+			}
+			if (!targetColumn) {
+				targetColumn = colname;
+			}
+
+			// Find other columns belonging to the same foreign key constraint (composite FKs)
+			const relatedColumns = foreignKeysResult
+				.filter((col) => col[0] === fkId && col[3] !== colname)
+				.map((col) => ({
+					childCol: col[3],
+					parentCol: col[4] || col[3],
+				}));
 
 			let relatedValuesResult = null;
 			if (referringColumns.length > 0) {
 				const relatedValuesQuery = `SELECT ${referringColumns
 					.map((c) => `"${c}"`)
+			if (
+				relatedColumns.length > 0 &&
+				Array.isArray(pKeyList) &&
+				pKeyList.length > 0 &&
+				Array.isArray(pKeyValues) &&
+				pKeyValues.length > 0
+			) {
+				const relatedValuesQuery = `SELECT ${relatedColumns
+					.map((c) => `"${c.childCol}"`)
 					.join(", ")} FROM "${sheetName}" WHERE ${pKeyList
 					.map((key, _id) => `${key} = "${pKeyValues[_id]}"`)
+					.map((key, idx) => `"${key}" = "${pKeyValues[idx]}"`)
 					.join(" AND ")};`;
 				relatedValuesResult =
 					await this.databaseService.RunQuery(relatedValuesQuery);
 			}
 
 			let dropdownQuery = `SELECT DISTINCT("${colname}") FROM "${referringTable}" WHERE`;
+			let dropdownQuery = `SELECT DISTINCT("${targetColumn}") FROM "${parentTable}" WHERE`;
 			if (relatedValuesResult && relatedValuesResult.values.length > 0) {
 				relatedValuesResult.columns.forEach((relCol, _id) => {
 					const relValue = relatedValuesResult.values[0][_id];
 					if (relValue !== "") {
 						dropdownQuery += ` "${relCol}" = "${relValue}" AND`;
+				relatedColumns.forEach((relCol, idx) => {
+					const relValue = relatedValuesResult.values[0][idx];
+					if (relValue !== null && relValue !== undefined && relValue !== "") {
+						dropdownQuery += ` "${relCol.parentCol}" = "${relValue}" AND`;
 					}
 				});
 			}
 			dropdownQuery += ` "${colname}" LIKE "%${value}%" LIMIT 10;`;
+			dropdownQuery += ` "${targetColumn}" LIKE "%${value}%" LIMIT 10;`;
 			const dropdownResult = await this.databaseService.RunQuery(dropdownQuery);
 
 			return {

@@ -216,10 +216,48 @@ const engineB = new CalculationEngine(null, null, null, null, null, regB);
 
 assert.strictEqual(engineA.Registry, regA, "engineA must hold regA");
 assert.strictEqual(engineB.Registry, regB, "engineB must hold regB");
+assert.strictEqual(
+	engineA.Evaluator.Registry,
+	engineA.Registry,
+	"engineA.Evaluator.Registry must be strictly equal to engineA.Registry",
+);
+assert.strictEqual(
+	engineB.Evaluator.Registry,
+	engineB.Registry,
+	"engineB.Evaluator.Registry must be strictly equal to engineB.Registry",
+);
+assert.strictEqual(
+	engineA.Evaluator.Evaluate(parser.Parse("CUSTOM_FOO(5)")),
+	10,
+	"engineA evaluator must evaluate CUSTOM_FOO registered on engineA.Registry",
+);
+assert.strictEqual(
+	engineA.Evaluator.Evaluate(parser.Parse("CUSTOM_BAR(5)")),
+	FormulaErrors.Name,
+	"engineA evaluator must not evaluate CUSTOM_BAR from engineB",
+);
 assert.notStrictEqual(
 	engineA.Registry,
 	engineB.Registry,
 	"Engine registries must be independent instances",
+);
+
+// Evaluator holds a live reference to injected registry
+const liveReg = new FunctionRegistry();
+const liveEval = new FormulaEvaluator(liveReg);
+assert.strictEqual(
+	liveEval.Evaluate(parser.Parse("LATE_FUNC(6)")),
+	FormulaErrors.Name,
+	"Before registration, LATE_FUNC returns #NAME?",
+);
+liveReg.RegisterFunction("LATE_FUNC", (x) => x * 7, {
+	MinArgs: 1,
+	MaxArgs: 1,
+});
+assert.strictEqual(
+	liveEval.Evaluate(parser.Parse("LATE_FUNC(6)")),
+	42,
+	"Evaluator must hold live reference to injected registry and reflect post-construction registration",
 );
 console.log("  PASSED: DI and instance isolation validated.");
 
@@ -475,6 +513,38 @@ assert.strictEqual(
 	null,
 	"GetMetadata for unknown function must return null",
 );
+
+// Metadata validation on registration
+const metaReg = new FunctionRegistry();
+assert.throws(
+	() => metaReg.RegisterFunction("NEG_MIN", () => {}, { MinArgs: -1 }),
+	TypeError,
+	"Negative MinArgs must throw TypeError",
+);
+assert.throws(
+	() => metaReg.RegisterFunction("NEG_MAX", () => {}, { MaxArgs: -1 }),
+	TypeError,
+	"Negative MaxArgs must throw TypeError",
+);
+assert.throws(
+	() =>
+		metaReg.RegisterFunction("MIN_GT_MAX", () => {}, {
+			MinArgs: 5,
+			MaxArgs: 2,
+		}),
+	RangeError,
+	"MaxArgs < MinArgs must throw RangeError",
+);
+assert.throws(
+	() => metaReg.RegisterFunction("BAD_CAT", () => {}, { Category: 123 }),
+	TypeError,
+	"Non-string Category must throw TypeError",
+);
+assert.throws(
+	() => metaReg.RegisterFunction("BAD_DESC", () => {}, { Description: 123 }),
+	TypeError,
+	"Non-string Description must throw TypeError",
+);
 console.log("  PASSED: Metadata & introspection validated.");
 
 // -----------------------------------------------------------------------------
@@ -512,6 +582,16 @@ assert.strictEqual(
 	"ROUND(3.5) = 4",
 );
 assert.strictEqual(
+	evaluator.Evaluate(parser.Parse("ROUND(-1.5, 0)")),
+	-1,
+	"ROUND(-1.5, 0) = -1 (JS Math.round ties towards +infinity)",
+);
+assert.strictEqual(
+	evaluator.Evaluate(parser.Parse("ROUND(1.005, 2)")),
+	1,
+	"ROUND(1.005, 2) = 1 (IEEE-754 float: 1.005 * 100 is 100.49999999999999)",
+);
+assert.strictEqual(
 	evaluator.Evaluate(parser.Parse("ROUND(1234, -2)")),
 	1200,
 	"ROUND(1234, -2) = 1200",
@@ -543,12 +623,27 @@ assert.strictEqual(
 	FormulaErrors.DivZero,
 	"MOD(10, 0) = #DIV/0!",
 );
+assert.strictEqual(
+	evaluator.Evaluate(parser.Parse("MOD(0, 5)")),
+	0,
+	"MOD(0, 5) = 0",
+);
 
 // Math: POWER
 assert.strictEqual(
 	evaluator.Evaluate(parser.Parse("POWER(2, 8)")),
 	256,
 	"POWER(2, 8) = 256",
+);
+assert.strictEqual(
+	evaluator.Evaluate(parser.Parse("POWER(0, 0)")),
+	1,
+	"POWER(0, 0) = 1",
+);
+assert.strictEqual(
+	evaluator.Evaluate(parser.Parse("POWER(0, 5)")),
+	0,
+	"POWER(0, 5) = 0",
 );
 assert.strictEqual(
 	evaluator.Evaluate(parser.Parse("POWER(0, -1)")),
@@ -559,6 +654,11 @@ assert.strictEqual(
 	evaluator.Evaluate(parser.Parse("POWER(-4, 0.5)")),
 	FormulaErrors.Num,
 	"POWER(-4, 0.5) = #NUM!",
+);
+assert.strictEqual(
+	evaluator.Evaluate(parser.Parse("POWER(-2, 0.5)")),
+	FormulaErrors.Num,
+	"POWER(-2, 0.5) = #NUM!",
 );
 
 // Math: PRODUCT
@@ -590,6 +690,26 @@ assert.strictEqual(
 	"PRODUCT across range ignores text & nulls (2 * 4 * 3 = 24)",
 );
 
+// Range-based PRODUCT with empty or purely non-numeric cells returns 0
+const emptyRangeContext = {
+	GetRangeValues: (startCol, startRow, endCol, endRow) => [
+		"non_num1",
+		"non_num2",
+		null,
+		"",
+	],
+};
+assert.strictEqual(
+	evaluator.Evaluate(parser.Parse("PRODUCT(A1:A4)"), emptyRangeContext),
+	0,
+	"PRODUCT across empty or non-numeric range returns 0",
+);
+assert.strictEqual(
+	evaluator.Evaluate(parser.Parse('PRODUCT("hello")')),
+	FormulaErrors.Value,
+	"PRODUCT with direct scalar non-numeric string yields #VALUE!",
+);
+
 // Math: INT
 assert.strictEqual(
 	evaluator.Evaluate(parser.Parse("INT(4.9)")),
@@ -601,10 +721,16 @@ assert.strictEqual(
 	4,
 	"INT(4.1) = 4",
 );
+assert.strictEqual(evaluator.Evaluate(parser.Parse("INT(0)")), 0, "INT(0) = 0");
 assert.strictEqual(
 	evaluator.Evaluate(parser.Parse("INT(-4.2)")),
 	-5,
 	"INT(-4.2) = -5 (floors down)",
+);
+assert.strictEqual(
+	evaluator.Evaluate(parser.Parse("INT(-4.9)")),
+	-5,
+	"INT(-4.9) = -5 (floors down)",
 );
 
 // Math: SQRT
@@ -617,6 +743,11 @@ assert.strictEqual(
 	evaluator.Evaluate(parser.Parse("SQRT(0)")),
 	0,
 	"SQRT(0) = 0",
+);
+assert.strictEqual(
+	evaluator.Evaluate(parser.Parse("SQRT(-1)")),
+	FormulaErrors.Num,
+	"SQRT(-1) = #NUM!",
 );
 assert.strictEqual(
 	evaluator.Evaluate(parser.Parse("SQRT(-4)")),
@@ -743,6 +874,102 @@ assert.strictEqual(
 	evaluator.Evaluate(parser.Parse('ISERROR("regular text")')),
 	false,
 	"ISERROR('regular text') = false",
+);
+assert.strictEqual(
+	evaluator.Evaluate(parser.Parse('ISERROR("#hello")')),
+	false,
+	"ISERROR('#hello') must be false (not a closed vocabulary formula error)",
+);
+assert.strictEqual(
+	evaluator.Evaluate(parser.Parse('ISERROR("#VALUE!")')),
+	true,
+	"ISERROR('#VALUE!') = true",
+);
+assert.strictEqual(
+	evaluator.Evaluate(parser.Parse('ISTEXT("#hello")')),
+	true,
+	"ISTEXT('#hello') must be true (regular string)",
+);
+
+// Constants.js Invariants: FormulaSpecialForms & FormulaErrorSet
+assert.ok(
+	Array.isArray(FormulaSpecialForms),
+	"FormulaSpecialForms must be an Array",
+);
+assert.ok(
+	Object.isFrozen(FormulaSpecialForms),
+	"FormulaSpecialForms must be frozen",
+);
+assert.deepStrictEqual(
+	[...FormulaSpecialForms],
+	["IF", "IFERROR"],
+	"FormulaSpecialForms must contain exactly IF and IFERROR",
+);
+
+assert.strictEqual(
+	IsFormulaError("#hello"),
+	false,
+	"IsFormulaError('#hello') must be false",
+);
+assert.strictEqual(
+	IsFormulaError("#UNKNOWN"),
+	false,
+	"IsFormulaError('#UNKNOWN') must be false",
+);
+assert.strictEqual(
+	IsFormulaError("#DIV/0!"),
+	true,
+	"IsFormulaError('#DIV/0!') must be true",
+);
+assert.strictEqual(
+	IsFormulaError("#VALUE!"),
+	true,
+	"IsFormulaError('#VALUE!') must be true",
+);
+assert.strictEqual(
+	IsFormulaError("#REF!"),
+	true,
+	"IsFormulaError('#REF!') must be true",
+);
+assert.strictEqual(
+	IsFormulaError("#NAME?"),
+	true,
+	"IsFormulaError('#NAME?') must be true",
+);
+assert.strictEqual(
+	IsFormulaError("#NUM!"),
+	true,
+	"IsFormulaError('#NUM!') must be true",
+);
+assert.strictEqual(
+	IsFormulaError("#N/A"),
+	true,
+	"IsFormulaError('#N/A') must be true",
+);
+assert.strictEqual(
+	IsFormulaError("#ERROR!"),
+	true,
+	"IsFormulaError('#ERROR!') must be true",
+);
+assert.strictEqual(
+	IsFormulaError("#CIRCULAR!"),
+	true,
+	"IsFormulaError('#CIRCULAR!') must be true",
+);
+assert.strictEqual(
+	IsFormulaError(null),
+	false,
+	"IsFormulaError(null) must be false",
+);
+assert.strictEqual(
+	IsFormulaError(123),
+	false,
+	"IsFormulaError(123) must be false",
+);
+assert.strictEqual(
+	IsFormulaError(undefined),
+	false,
+	"IsFormulaError(undefined) must be false",
 );
 
 console.log(

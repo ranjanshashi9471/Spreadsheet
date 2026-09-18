@@ -285,6 +285,7 @@ class SpreadsheetUI {
 			.getElementById("schemaFileInput")
 			.addEventListener("change", (e) => {
 				this.HandleDbDumpFile(e);
+				this.HandleSchemaFile(e);
 				space.innerHTML = "";
 			});
 

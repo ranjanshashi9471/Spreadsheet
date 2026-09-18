@@ -28,14 +28,33 @@ This document provides a comprehensive technical reference for engineers working
    - [Pending Changes Map & Latest-Snapshot-Wins](#pending-changes-map--latest-snapshot-wins)
    - [Optimized Range Clearing (`ClearCells`)](#optimized-range-clearing-clearcells)
 7. [Presentation Layer & Event-Driven GridRenderer](#7-presentation-layer--event-driven-gridrenderer)
-   - [Subscriber Model & Event Vocabulary](#subscriber-model--event-vocabulary)
-   - [O(1) DOM Cell Updates](#o1-dom-cell-updates)
-   - [Lifecycle Cleanup & Dynamic Model Rebinding](#lifecycle-cleanup--dynamic-model-rebinding)
-8. [Storage Engine (`CellStore` & `AVLTree`)](#8-storage-engine-cellstore--avltree)
-   - [Dual Storage Model: `Value` vs `ComputedValue`](#dual-storage-model-value-vs-computedvalue)
-   - [Balanced AVL-of-AVL Trees](#balanced-avl-of-avl-trees)
-9. [Developer Rules & Nuances (The "Gotchas" Guide)](#9-developer-rules--nuances-the-gotchas-guide)
-10. [Automated Verification & Test Harness](#10-automated-verification--test-harness)
+   - [Bulk Multi-Cell Restoration (`RestoreCells`)](#bulk-multi-cell-restoration-restorecells)
+8. [Formula Architecture & Function Registry Deep Dive](#7-formula-architecture--function-registry-deep-dive)
+9. [Formula Architecture & Function Registry Deep Dive](#7-formula-architecture--function-registry-deep-dive)
+   - [Architectural Separation: Special Forms vs Function Registry](#architectural-separation-special-forms-vs-function-registry)
+   - [Decoupled Shared Language Constants (`Constants.js`)](#decoupled-shared-language-constants-constantsjs)
+   - [Dependency Injection & Construction Sequencing](#dependency-injection--construction-sequencing)
+   - [Boundary Arity Validation & Metadata Introspection](#boundary-arity-validation--metadata-introspection)
+   - [Built-in Function Reference Matrix](#built-in-function-reference-matrix)
+10. [Presentation Layer & Event-Driven GridRenderer](#8-presentation-layer--event-driven-gridrenderer)
+    - [Evaluation Semantics & Floating-Point Nuances](#evaluation-semantics--floating-point-nuances)
+11. [Presentation Layer & Event-Driven GridRenderer](#8-presentation-layer--event-driven-gridrenderer)
+    - [Subscriber Model & Event Vocabulary](#subscriber-model--event-vocabulary)
+    - [O(1) DOM Cell Updates](#o1-dom-cell-updates)
+    - [Lifecycle Cleanup & Dynamic Model Rebinding](#lifecycle-cleanup--dynamic-model-rebinding)
+12. [Storage Engine (`CellStore` & `AVLTree`)](#8-storage-engine-cellstore--avltree)
+13. [Storage Engine (`CellStore` & `AVLTree`)](#9-storage-engine-cellstore--avltree)
+    - [Dual Storage Model: `Value` vs `ComputedValue`](#dual-storage-model-value-vs-computedvalue)
+    - [Balanced AVL-of-AVL Trees](#balanced-avl-of-avl-trees)
+14. [Developer Rules & Nuances (The "Gotchas" Guide)](#9-developer-rules--nuances-the-gotchas-guide)
+15. [Automated Verification & Test Harness](#10-automated-verification--test-harness)
+16. [Developer Rules & Nuances (The "Gotchas" Guide)](#10-developer-rules--nuances-the-gotchas-guide)
+17. [Automated Verification & Test Harness](#11-automated-verification--test-harness)
+18. [Storage Engine (`CellStore` & `AVLTree`)](#9-storage-engine-cellstore--avltree)
+    - [Dual Storage Model: `Value` vs `ComputedValue`](#dual-storage-model-value-vs-computedvalue)
+    - [Balanced AVL-of-AVL Trees](#balanced-avl-of-avl-trees)
+19. [Developer Rules & Nuances (The "Gotchas" Guide)](#10-developer-rules--nuances-the-gotchas-guide)
+20. [Automated Verification & Test Harness](#11-automated-verification--test-harness)
 
 ---
 
@@ -552,6 +571,8 @@ model.RestoreCells(this.CellEntries);
 
 ## 6. Formula Architecture & Function Registry Deep Dive
 
+## 7. Formula Architecture & Function Registry Deep Dive
+
 ### Architectural Separation: Special Forms vs Function Registry
 
 The Arbor formula execution engine maintains a strict architectural boundary between **eager mathematical/statistical functions** and **special syntactic forms with custom control flow**:
@@ -585,6 +606,8 @@ To enforce this boundary:
 1. `IF` and `IFERROR` are completely purged from `FunctionRegistry.js`.
 2. `FormulaEvaluator.js` intercepts special forms natively via `FormulaSpecialForms.has(name)` and executes them using specialized private routines (`EvaluateIf`, `EvaluateIfError`).
 3. `FunctionRegistry.RegisterFunction(name, fn)` explicitly checks `FormulaSpecialForms.has(normalizedName)` and throws an informative Error if a caller attempts to register or shadow `IF` or `IFERROR`.
+4. `FormulaEvaluator.js` intercepts special forms natively via `FormulaSpecialForms.includes(name)` and executes them using specialized private routines (`EvaluateIf`, `EvaluateIfError`).
+5. `FunctionRegistry.RegisterFunction(name, fn)` explicitly checks `FormulaSpecialForms.includes(normalizedName)` and throws an informative Error if a caller attempts to register or shadow `IF` or `IFERROR`.
 
 ---
 
@@ -608,13 +631,21 @@ To prevent circular module dependencies (`FunctionRegistry -> FormulaEvaluator -
 - **`FormulaSpecialForms`**:
   ```javascript
   const FormulaSpecialForms = Object.freeze(new Set(["IF", "IFERROR"]));
+  const FormulaSpecialForms = Object.freeze(["IF", "IFERROR"]);
   ```
 - **`IsFormulaError(value)`**:
+- **`FormulaErrorSet` & `IsFormulaError(value)`**:
+
   ```javascript
+  const FormulaErrorSet = Object.freeze(new Set(Object.values(FormulaErrors)));
+
   function IsFormulaError(value) {
   	return typeof value === "string" && value.startsWith("#");
+  	return typeof value === "string" && FormulaErrorSet.has(value);
   }
   ```
+
+  Validates against the closed `FormulaErrors` vocabulary so arbitrary strings starting with `#` (e.g. `"#hello"`) are not misidentified as formula errors.
 
 Both `FunctionRegistry` and `FormulaEvaluator` import from `Constants.js`. Neither imports the other, ensuring zero circular dependencies.
 
@@ -630,6 +661,17 @@ Components in the calculation pipeline are constructed in strict topological dep
 4. `this.Evaluator = evaluator || new FormulaEvaluator(this.Registry, this.Resolver)`
 5. `this.Parser = parser || new OhmFormulaParser()`
 6. `this.Analyzer = analyzer || new DependencyAnalyzer()`
+
+#### The Collaborator Contract & Live Reference Semantics
+
+The calculation engine enforces strict collaborator relationships between injected components:
+
+1. **Evaluator Holds Engine Registry**:
+   `engine.Evaluator.Registry === engine.Registry`.
+2. **Live Reference Mutability**:
+   `FormulaEvaluator` holds a live reference to its injected `FunctionRegistry`. Registering a new function on `engine.Registry` post-construction makes the function immediately available for formula evaluation in `engine.Evaluator` without rebuilding the evaluator.
+3. **Engine Isolation**:
+   Supplying an explicit `FunctionRegistry` instance isolates custom registered functions entirely to that engine instance, preventing namespace pollution across concurrent sheet engines.
 
 #### The Shared ReferenceResolver Invariant
 
@@ -709,6 +751,39 @@ Arbor ships with 27 built-in eager functions across 5 categories, strictly enfor
 
 ## 7. Presentation Layer & Event-Driven GridRenderer
 
+### Evaluation Semantics & Floating-Point Nuances
+
+Arbor's calculation engine rigorously defines boundary and arithmetic behaviors across its built-in functions:
+
+#### 1. `PRODUCT` Empty & Non-Numeric Range Sets
+
+When evaluating ranges (e.g. `=PRODUCT(A1:A5)`), non-numeric strings and empty cells are ignored. If a range contains **zero numbers** (e.g. all cells are text or blank), Arbor explicitly defines the product outcome as `0`. In contrast, passing a direct scalar non-numeric string (e.g. `=PRODUCT("hello")`) yields `#VALUE!`.
+
+#### 2. `ROUND` Floating-Point Semantics (IEEE-754)
+
+`ROUND(n, digits)` implements decimal scaling via JavaScript's native math primitives: `Math.round(n * 10^digits) / 10^digits`. Developers must observe two distinct behaviors:
+
+- **Tie-Breaking Direction**: JavaScript's `Math.round(x)` breaks ties by rounding half-way cases towards $+\infty$. Therefore, `ROUND(-1.5, 0)` yields `-1` (in contrast to Excel's symmetric round-half-away-from-zero which yields `-2`).
+- **Binary Floating-Point Artifacts**: In IEEE-754 64-bit binary floats, values like `1.005` cannot be represented with exact decimal precision (`1.0049999999999998934...`). When scaled by $10^2$, the product is `100.49999999999999`. Calling `Math.round` truncates this to `100`, resulting in `1.00` rather than `1.01`.
+
+#### 3. `MOD` Floor Modulo
+
+Arbor implements standard spreadsheet floor modulo: `n - d * Math.floor(n / d)`, distinct from JavaScript's native `%` remainder operator. This guarantees:
+
+- `MOD(10, 3) = 1`
+- `MOD(-10, 3) = 2`
+- `MOD(10, -3) = -2`
+- `MOD(-10, -3) = -1`
+- `MOD(n, 0)` yields `#DIV/0!`
+
+#### 4. `INT` Floor Semantics
+
+`INT(n)` computes `Math.floor(n)`. Negative non-integers always round down away from zero: `INT(-4.2) = -5` and `INT(-4.9) = -5`.
+
+---
+
+## 8. Presentation Layer & Event-Driven GridRenderer
+
 ### Subscriber Model & Event Vocabulary
 
 `SpreadsheetModel` exports a frozen event vocabulary:
@@ -768,6 +843,8 @@ If a `GridRenderer` is destroyed or attached to a different model:
 
 ## 8. Storage Engine (`CellStore` & `AVLTree`)
 
+## 9. Storage Engine (`CellStore` & `AVLTree`)
+
 ### Dual Storage Model: `Value` vs `ComputedValue`
 
 Every cell in Arbor maintains two distinct values:
@@ -795,6 +872,8 @@ Storage is implemented in [`Datastructure.js`](file:///home/shashi/Desktop/Worki
 ---
 
 ## 9. Developer Rules & Nuances (The "Gotchas" Guide)
+
+## 10. Developer Rules & Nuances (The "Gotchas" Guide)
 
 When writing new features, formulas, or commands for Arbor, observe these non-negotiable rules:
 
@@ -842,11 +921,14 @@ Column keys can be 0-based integers (`0`, `1`, `2`) or Excel letter names (`"A"`
 
 ## 10. Automated Verification & Test Harness
 
+## 11. Automated Verification & Test Harness
+
 Arbor maintains automated test suites in the `scratch/` directory:
 
 | Test Suite                              | Purpose                                                                                                                                                                                                                                                      |
 | :-------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **`scratch/test_function_registry.js`** | **Commit 3 Verification**: Enforces Invariant 6 (eager functions only), special-form shadowing protection & lazy control flow, DI isolation, shared resolver invariant, boundary arity validation, frozen metadata, and complete built-in library semantics. |
+| **`scratch/test_foreign_key.js`**       | **Foreign Key & Schema Verification**: Verifies schema loading, foreign key dropdown suggestions with wild search (`LIKE "%...%"`), differing column names, and composite foreign key constraint narrowing.                                                  |
 | **`scratch/test_graph_perf.js`**        | **Commit 2 Verification**: Benchmarks Kahn's algorithm traversal and cycle detection across linear chains (1,000 cells), diamond DAGs, wide fan-outs, and binary trees.                                                                                      |
 | **`scratch/test_decoupling.js`**        | **Commit 1 Verification**: Enforces Zero-DOM static boundaries, Single-Notification transactions, diamond DAG duplicate convergence, nested batching, and renderer lifecycle.                                                                                |
 | **`scratch/test_slice9.js`**            | Calculation engine, reactive cascading, error propagation, cycle recovery, and full regression across slices 1-8.                                                                                                                                            |
@@ -864,6 +946,9 @@ To run the entire suite:
 ```bash
 # Verify Commit 3: Function registry, formula architecture, and built-in library
 node scratch/test_function_registry.js
+
+# Verify Foreign Key suggestions and schema execution
+node scratch/test_foreign_key.js
 
 # Verify Commit 2: Graph performance and benchmarks
 node scratch/test_graph_perf.js

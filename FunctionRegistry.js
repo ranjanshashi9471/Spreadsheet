@@ -122,9 +122,42 @@ class FunctionRegistry {
 
 		const upper = name.trim().toUpperCase();
 		if (FormulaSpecialForms && FormulaSpecialForms.has(upper)) {
+		if (FormulaSpecialForms && FormulaSpecialForms.includes(upper)) {
 			throw new Error(
 				`Cannot register '${name}': special syntactic forms are handled directly by FormulaEvaluator.`,
 			);
+		}
+
+		if (metadata && typeof metadata === "object") {
+			if (metadata.MinArgs !== undefined) {
+				if (!Number.isInteger(metadata.MinArgs) || metadata.MinArgs < 0) {
+					throw new TypeError("MinArgs must be a non-negative integer.");
+				}
+			}
+			if (metadata.MaxArgs !== undefined) {
+				if (!Number.isInteger(metadata.MaxArgs) || metadata.MaxArgs < 0) {
+					throw new TypeError("MaxArgs must be a non-negative integer.");
+				}
+			}
+			if (
+				metadata.MinArgs !== undefined &&
+				metadata.MaxArgs !== undefined &&
+				metadata.MaxArgs < metadata.MinArgs
+			) {
+				throw new RangeError("MaxArgs cannot be less than MinArgs.");
+			}
+			if (
+				metadata.Category !== undefined &&
+				typeof metadata.Category !== "string"
+			) {
+				throw new TypeError("Category must be a string.");
+			}
+			if (
+				metadata.Description !== undefined &&
+				typeof metadata.Description !== "string"
+			) {
+				throw new TypeError("Description must be a string.");
+			}
 		}
 
 		const wrapped = (...args) => {
@@ -330,6 +363,9 @@ class FunctionRegistry {
 		);
 
 		// PRODUCT: Multiplies all numbers given as arguments
+		// PRODUCT: Multiplies all numbers given as arguments.
+		// If no numeric values are present (e.g., arguments are ranges containing only text/blanks),
+		// Arbor explicitly defines the product outcome as 0 (direct non-numeric scalars return #VALUE!).
 		this.RegisterFunction(
 			"PRODUCT",
 			(...args) => {
@@ -349,6 +385,7 @@ class FunctionRegistry {
 				MinArgs: 1,
 				Category: "Math",
 				Description: "Multiplies all numbers given as arguments",
+				Description: "Multiplies all numbers given as arguments (returns 0 if empty/non-numeric)",
 			},
 		);
 

@@ -56,18 +56,28 @@ const FormulaErrors = Object.freeze({
  * and are evaluated directly by FormulaEvaluator rather than FunctionRegistry.
  */
 const FormulaSpecialForms = Object.freeze(new Set(["IF", "IFERROR"]));
+const FormulaSpecialForms = Object.freeze(["IF", "IFERROR"]);
 
 /**
  * Returns true if a given value is a spreadsheet formula error token.
+ * Precomputed Set of recognized spreadsheet error tokens for O(1) membership checks.
+ */
+const FormulaErrorSet = Object.freeze(new Set(Object.values(FormulaErrors)));
+
+/**
+ * Returns true if a given value is a recognized spreadsheet formula error token.
+ * Validates against the closed FormulaErrors vocabulary.
  * @param {*} value
  * @returns {boolean}
  */
 function IsFormulaError(value) {
 	return typeof value === "string" && value.startsWith("#");
+	return typeof value === "string" && FormulaErrorSet.has(value);
 }
 
 if (typeof window !== "undefined") {
 	window.FormulaErrors = FormulaErrors;
+	window.FormulaErrorSet = FormulaErrorSet;
 	window.FormulaSpecialForms = FormulaSpecialForms;
 	window.IsFormulaError = IsFormulaError;
 }
@@ -81,6 +91,7 @@ if (typeof module !== "undefined" && module.exports) {
 		placeholders,
 		DATABASEDUMPTYPE,
 		FormulaErrors,
+		FormulaErrorSet,
 		FormulaSpecialForms,
 		IsFormulaError,
 	};

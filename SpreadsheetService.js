@@ -76,14 +76,6 @@ class BackendService {
 	async GetCellUpdateInfo(sheetName, pKeyList, pKeyValues, colname, value) {
 		const foreignKeysResult =
 			await this.databaseService.GetForeignKeyList(sheetName);
-		let referringTable = "";
-		let referringColumns = [];
-		foreignKeysResult.forEach((col) => {
-			//structure: [id, seq, referring_table, referring_column, referred_table, referred_column, update_rule, delete_rule, match]
-			if (col[3] === colname) {
-				referringTable = col[2];
-			}
-		});
 		// SQLite PRAGMA foreign_key_list returns:
 		// [id (0), seq (1), table (2), from (3), to (4), on_update (5), on_delete (6), match (7)]
 		// col[2] is the referenced (parent) table
@@ -91,10 +83,6 @@ class BackendService {
 		// col[4] is the parent table column (targetColumn)
 		const matchedFk = foreignKeysResult.find((col) => col[3] === colname);
 
-		if (referringTable !== "") {
-			foreignKeysResult.forEach((col) => {
-				if (col[2] === referringTable && col[3] !== colname) {
-					referringColumns.push(col[3]);
 		if (matchedFk) {
 			const fkId = matchedFk[0];
 			const parentTable = matchedFk[2];
@@ -110,7 +98,6 @@ class BackendService {
 						targetColumn = pkCol[1];
 					}
 				}
-			});
 			}
 			if (!targetColumn) {
 				targetColumn = colname;
@@ -125,9 +112,6 @@ class BackendService {
 				}));
 
 			let relatedValuesResult = null;
-			if (referringColumns.length > 0) {
-				const relatedValuesQuery = `SELECT ${referringColumns
-					.map((c) => `"${c}"`)
 			if (
 				relatedColumns.length > 0 &&
 				Array.isArray(pKeyList) &&
@@ -138,20 +122,14 @@ class BackendService {
 				const relatedValuesQuery = `SELECT ${relatedColumns
 					.map((c) => `"${c.childCol}"`)
 					.join(", ")} FROM "${sheetName}" WHERE ${pKeyList
-					.map((key, _id) => `${key} = "${pKeyValues[_id]}"`)
 					.map((key, idx) => `"${key}" = "${pKeyValues[idx]}"`)
 					.join(" AND ")};`;
 				relatedValuesResult =
 					await this.databaseService.RunQuery(relatedValuesQuery);
 			}
 
-			let dropdownQuery = `SELECT DISTINCT("${colname}") FROM "${referringTable}" WHERE`;
 			let dropdownQuery = `SELECT DISTINCT("${targetColumn}") FROM "${parentTable}" WHERE`;
 			if (relatedValuesResult && relatedValuesResult.values.length > 0) {
-				relatedValuesResult.columns.forEach((relCol, _id) => {
-					const relValue = relatedValuesResult.values[0][_id];
-					if (relValue !== "") {
-						dropdownQuery += ` "${relCol}" = "${relValue}" AND`;
 				relatedColumns.forEach((relCol, idx) => {
 					const relValue = relatedValuesResult.values[0][idx];
 					if (relValue !== null && relValue !== undefined && relValue !== "") {
@@ -159,7 +137,6 @@ class BackendService {
 					}
 				});
 			}
-			dropdownQuery += ` "${colname}" LIKE "%${value}%" LIMIT 10;`;
 			dropdownQuery += ` "${targetColumn}" LIKE "%${value}%" LIMIT 10;`;
 			const dropdownResult = await this.databaseService.RunQuery(dropdownQuery);
 

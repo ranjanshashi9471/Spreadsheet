@@ -239,6 +239,178 @@ async function Run() {
 	assert.strictEqual(resNonFk.suggestions, null, "Suggestions must be null");
 	console.log("  PASSED: Direct update fallback validated.\n");
 
+	// -------------------------------------------------------------------------
+	// Test Case 5: End-to-End UI Interaction Path
+	// input -> service -> suggestions -> DOM dropdown -> click -> cell value
+	// -------------------------------------------------------------------------
+	console.log(
+		"7. Testing End-to-End DOM UI interaction path (input -> dropdown -> click -> cell value)...",
+	);
+
+	const domElements = new Map();
+	class MockElement {
+		constructor(tagName = "div") {
+			this.tagName = tagName;
+			this.style = { display: "none" };
+			this.innerHTML = "";
+			this.value = "";
+			this.dataset = {};
+			this.children = [];
+			this.eventListeners = {};
+		}
+		addEventListener(event, fn) {
+			if (!this.eventListeners[event]) this.eventListeners[event] = [];
+			this.eventListeners[event].push(fn);
+		}
+		appendChild(child) {
+			this.children.push(child);
+		}
+		async dispatch(event, eventObj = {}) {
+			const handlers = this.eventListeners[event] || [];
+			for (const handler of handlers) {
+				await handler({
+					preventDefault: () => {},
+					target: this,
+					...eventObj,
+				});
+			}
+		}
+	}
+
+	const cellInput = new MockElement("input");
+	cellInput.name = "employees";
+	cellInput.value = "EN";
+
+	const dropdownList = new MockElement("ul");
+	domElements.set("employees-1-2-dropdown", dropdownList);
+
+	const mockDocument = {
+		getElementById: (id) => domElements.get(id) || null,
+		createElement: (tagName) => new MockElement(tagName),
+	};
+
+	const mockSheet = {
+		primaryKeys: new Set([0]),
+		columns: ["emp_id", "name", "department"],
+		primaryKeyMap: new Map([[1, ["1"]]]),
+		cellData: new Map(),
+		InsertData(r, c, val) {
+			this.cellData.set(`${r},${c}`, val);
+		},
+	};
+
+	const mockUI = {
+		spreadsheetService: backendService,
+		currentSpreadsheet: mockSheet,
+		async HandleInputChange(event, colno, rowno, isInMemory = true) {
+			event.preventDefault();
+			const { name: sheetName, value } = event.target;
+			const dropdown = mockDocument.getElementById(
+				`${sheetName}-${rowno}-${colno}-dropdown`,
+			);
+
+			if (isInMemory) {
+				this.currentSpreadsheet.InsertData(rowno, colno, value);
+				dropdown.style.display = "none";
+				return;
+			}
+
+			const pKeyList = Array.from(this.currentSpreadsheet.primaryKeys).map(
+				(colId) => this.currentSpreadsheet.columns[colId],
+			);
+			const pKeyValues = this.currentSpreadsheet.primaryKeyMap.get(rowno);
+
+			const updateInfo = await this.spreadsheetService.GetCellUpdateInfo(
+				sheetName,
+				pKeyList,
+				pKeyValues,
+				this.currentSpreadsheet.columns[colno],
+				value,
+			);
+
+			if (updateInfo.type !== "foreignKey") {
+				dropdown.style.display = "none";
+				this.currentSpreadsheet.InsertData(rowno, colno, value);
+			} else {
+				dropdown.innerHTML = "";
+				dropdown.children = [];
+				if (updateInfo.suggestions.length > 0) {
+					dropdown.style.display = "block";
+					updateInfo.suggestions.forEach((data) => {
+						const li = mockDocument.createElement("li");
+						li.innerHTML = data[0];
+						li.dataset.value = data[0];
+						li.addEventListener("click", async (e) => {
+							e.preventDefault();
+							dropdown.style.display = "none";
+							event.target.value = e.target.dataset.value;
+							this.currentSpreadsheet.InsertData(
+								rowno,
+								colno,
+								e.target.dataset.value,
+							);
+						});
+						dropdown.appendChild(li);
+					});
+				}
+			}
+		},
+	};
+
+	// 1. Trigger input change on cellInput (row 1, col 2 -> department with value 'EN')
+	await mockUI.HandleInputChange(
+		{ preventDefault: () => {}, target: cellInput },
+		2,
+		1,
+		false,
+	);
+
+	// Verify dropdown populated and displayed
+	assert.strictEqual(
+		dropdownList.style.display,
+		"block",
+		"Dropdown must be visible (display: block)",
+	);
+	assert.strictEqual(
+		dropdownList.children.length,
+		2,
+		"Dropdown must have 2 suggestions for 'EN'",
+	);
+	assert.strictEqual(
+		dropdownList.children[0].dataset.value,
+		"ENG",
+		"First suggestion must be 'ENG'",
+	);
+	assert.strictEqual(
+		dropdownList.children[1].dataset.value,
+		"ENV",
+		"Second suggestion must be 'ENV'",
+	);
+
+	// 2. User clicks the first suggestion ("ENG")
+	await dropdownList.children[0].dispatch("click");
+
+	// Verify UI state after click
+	assert.strictEqual(
+		dropdownList.style.display,
+		"none",
+		"Dropdown must hide after suggestion selection (display: none)",
+	);
+	assert.strictEqual(
+		cellInput.value,
+		"ENG",
+		"Input value must update to selected suggestion 'ENG'",
+	);
+	assert.strictEqual(
+		mockSheet.cellData.get("1,2"),
+		"ENG",
+		"Spreadsheet storage must commit selected value 'ENG' to cell (1, 2)",
+	);
+
+	console.log(
+		"  PASSED: Full UI interaction path (input -> dropdown -> click -> cell commit) verified.\n",
+	);
+
 	console.log(">>> ALL FOREIGN KEY DROPDOWN & SCHEMA TESTS PASSED! <<<\n");
 }
 

@@ -97,9 +97,12 @@ class CalculationEngine {
 	) {
 		this.Resolver =
 			resolver ||
+			(evaluator && evaluator.Resolver) ||
+			(graph && graph.Resolver) ||
 			(typeof CalcRefResolver !== "undefined" ? new CalcRefResolver() : null);
 		this.Registry =
 			registry ||
+			(evaluator && evaluator.Registry) ||
 			(typeof CalcRegistry !== "undefined" ? new CalcRegistry() : null);
 		this.Graph =
 			graph ||
@@ -109,6 +112,20 @@ class CalculationEngine {
 			(typeof CalcEvaluator !== "undefined"
 				? new CalcEvaluator(this.Registry, this.Resolver)
 				: null);
+
+		// Synchronize collaborator instances across injected components
+		if (this.Evaluator) {
+			if (this.Registry && this.Evaluator.Registry !== this.Registry) {
+				this.Evaluator.Registry = this.Registry;
+			}
+			if (this.Resolver && this.Evaluator.Resolver !== this.Resolver) {
+				this.Evaluator.Resolver = this.Resolver;
+			}
+		}
+		if (this.Graph && this.Resolver && this.Graph.Resolver !== this.Resolver) {
+			this.Graph.Resolver = this.Resolver;
+		}
+
 		this.Parser =
 			parser ||
 			(typeof CalcOhmParser !== "undefined"
@@ -123,6 +140,22 @@ class CalculationEngine {
 		this.CircularFormulas = new Map(); // cellKey -> { AST, RawFormula, Cells, Ranges, RowKey, ColKey, Style }
 	}
 
+	/**
+	 * Registers a custom function with the engine's function registry.
+	 * Immediately available to the engine's evaluator.
+	 * @param {string} name
+	 * @param {Function} fn
+	 * @param {object} [metadata={}]
+	 */
+	RegisterFunction(name, fn, metadata = {}) {
+		if (!this.Registry) {
+			throw new Error(
+				"Cannot register function: CalculationEngine has no Registry.",
+			);
+		}
+		this.Registry.RegisterFunction(name, fn, metadata);
+	}
+
 	// Backwards-compatible lowercase property aliases
 	get parser() {
 		return this.Parser;
@@ -135,12 +168,21 @@ class CalculationEngine {
 	}
 	set evaluator(val) {
 		this.Evaluator = val;
+		if (val && this.Registry) {
+			val.Registry = this.Registry;
+		}
+		if (val && this.Resolver) {
+			val.Resolver = this.Resolver;
+		}
 	}
 	get registry() {
 		return this.Registry;
 	}
 	set registry(val) {
 		this.Registry = val;
+		if (this.Evaluator) {
+			this.Evaluator.Registry = val;
+		}
 	}
 	get analyzer() {
 		return this.Analyzer;
@@ -153,12 +195,21 @@ class CalculationEngine {
 	}
 	set graph(val) {
 		this.Graph = val;
+		if (val && this.Resolver) {
+			val.Resolver = this.Resolver;
+		}
 	}
 	get resolver() {
 		return this.Resolver;
 	}
 	set resolver(val) {
 		this.Resolver = val;
+		if (this.Evaluator) {
+			this.Evaluator.Resolver = val;
+		}
+		if (this.Graph) {
+			this.Graph.Resolver = val;
+		}
 	}
 	get formulaCache() {
 		return this.FormulaCache;

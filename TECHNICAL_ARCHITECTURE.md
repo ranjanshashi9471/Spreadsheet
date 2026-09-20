@@ -604,10 +604,8 @@ Standard spreadsheet functions (such as `SUM`, `AVERAGE`, `ROUND`, `SQRT`) evalu
 To enforce this boundary:
 
 1. `IF` and `IFERROR` are completely purged from `FunctionRegistry.js`.
-2. `FormulaEvaluator.js` intercepts special forms natively via `FormulaSpecialForms.has(name)` and executes them using specialized private routines (`EvaluateIf`, `EvaluateIfError`).
-3. `FunctionRegistry.RegisterFunction(name, fn)` explicitly checks `FormulaSpecialForms.has(normalizedName)` and throws an informative Error if a caller attempts to register or shadow `IF` or `IFERROR`.
-4. `FormulaEvaluator.js` intercepts special forms natively via `FormulaSpecialForms.includes(name)` and executes them using specialized private routines (`EvaluateIf`, `EvaluateIfError`).
-5. `FunctionRegistry.RegisterFunction(name, fn)` explicitly checks `FormulaSpecialForms.includes(normalizedName)` and throws an informative Error if a caller attempts to register or shadow `IF` or `IFERROR`.
+2. `FormulaEvaluator.js` intercepts special forms natively via `FormulaSpecialForms.includes(name)` and executes them using specialized private routines (`EvaluateIf`, `EvaluateIfError`).
+3. `FunctionRegistry.RegisterFunction(name, fn)` explicitly checks `FormulaSpecialForms.includes(normalizedName)` and throws an informative Error if a caller attempts to register or shadow `IF` or `IFERROR`.
 
 ---
 
@@ -630,17 +628,14 @@ To prevent circular module dependencies (`FunctionRegistry -> FormulaEvaluator -
   ```
 - **`FormulaSpecialForms`**:
   ```javascript
-  const FormulaSpecialForms = Object.freeze(new Set(["IF", "IFERROR"]));
   const FormulaSpecialForms = Object.freeze(["IF", "IFERROR"]);
   ```
-- **`IsFormulaError(value)`**:
 - **`FormulaErrorSet` & `IsFormulaError(value)`**:
 
   ```javascript
   const FormulaErrorSet = Object.freeze(new Set(Object.values(FormulaErrors)));
 
   function IsFormulaError(value) {
-  	return typeof value === "string" && value.startsWith("#");
   	return typeof value === "string" && FormulaErrorSet.has(value);
   }
   ```

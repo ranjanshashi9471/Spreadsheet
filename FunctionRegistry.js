@@ -121,7 +121,6 @@ class FunctionRegistry {
 		}
 
 		const upper = name.trim().toUpperCase();
-		if (FormulaSpecialForms && FormulaSpecialForms.has(upper)) {
 		if (FormulaSpecialForms && FormulaSpecialForms.includes(upper)) {
 			throw new Error(
 				`Cannot register '${name}': special syntactic forms are handled directly by FormulaEvaluator.`,
@@ -385,7 +384,8 @@ class FunctionRegistry {
 				MinArgs: 1,
 				Category: "Math",
 				Description: "Multiplies all numbers given as arguments",
-				Description: "Multiplies all numbers given as arguments (returns 0 if empty/non-numeric)",
+				Description:
+					"Multiplies all numbers given as arguments (returns 0 if empty/non-numeric)",
 			},
 		);
 

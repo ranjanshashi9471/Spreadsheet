@@ -92,9 +92,9 @@ class FormulaEvaluator {
 	 */
 	IsSpecialForm(name) {
 		if (!name || typeof name !== "string") return false;
-		return (
-			FormulaSpecialForms && FormulaSpecialForms.has(name.trim().toUpperCase())
-			FormulaSpecialForms && FormulaSpecialForms.includes(name.trim().toUpperCase())
+		return Boolean(
+			FormulaSpecialForms &&
+			FormulaSpecialForms.includes(name.trim().toUpperCase()),
 		);
 	}
 
@@ -298,7 +298,6 @@ class FormulaEvaluator {
 		const upperName = (rawName || "").trim().toUpperCase();
 
 		// Short-circuiting logical special forms: IF and IFERROR
-		if (FormulaSpecialForms && FormulaSpecialForms.has(upperName)) {
 		if (FormulaSpecialForms && FormulaSpecialForms.includes(upperName)) {
 			if (upperName === "IF") {
 				return this.EvaluateIf(functionCallNode, context);

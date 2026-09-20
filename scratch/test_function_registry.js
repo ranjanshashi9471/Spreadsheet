@@ -1038,6 +1038,32 @@ assert.strictEqual(
 	"A4 must evaluate to 'RESULT: 4'",
 );
 
+// Test 6: Engine-level custom-function registration and end-to-end reactive calculation
+engine.RegisterFunction("DOUBLE_ME", (x) => Number(x) * 2, {
+	MinArgs: 1,
+	MaxArgs: 1,
+	Category: "Custom",
+	Description: "Doubles input number",
+});
+
+engine.ProcessCellUpdate(mockModel, 1, 1, 25); // B1 = 25
+assert.strictEqual(mockModel.GetCell(1, 1).ComputedValue, 25, "B1 must be 25");
+
+engine.ProcessCellUpdate(mockModel, 2, 1, "=DOUBLE_ME(B1)"); // B2 = =DOUBLE_ME(B1)
+assert.strictEqual(
+	mockModel.GetCell(2, 1).ComputedValue,
+	50,
+	"B2 must evaluate custom function DOUBLE_ME(25) = 50",
+);
+
+// Reactive update: change B1 to 100 -> B2 must recalculate to 200
+engine.ProcessCellUpdate(mockModel, 1, 1, 100);
+assert.strictEqual(
+	mockModel.GetCell(2, 1).ComputedValue,
+	200,
+	"B2 must reactively recalculate to 200 after B1 update",
+);
+
 console.log("  PASSED: End-to-End CalculationEngine integration validated.");
 
 console.log("\n>>> ALL COMMIT 3 VERIFICATIONS PASSED SUCCESSFULLY! <<<\n");

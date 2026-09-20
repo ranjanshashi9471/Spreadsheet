@@ -55,11 +55,9 @@ const FormulaErrors = Object.freeze({
  * Built-in syntactic special forms that require custom/lazy control flow
  * and are evaluated directly by FormulaEvaluator rather than FunctionRegistry.
  */
-const FormulaSpecialForms = Object.freeze(new Set(["IF", "IFERROR"]));
 const FormulaSpecialForms = Object.freeze(["IF", "IFERROR"]);
 
 /**
- * Returns true if a given value is a spreadsheet formula error token.
  * Precomputed Set of recognized spreadsheet error tokens for O(1) membership checks.
  */
 const FormulaErrorSet = Object.freeze(new Set(Object.values(FormulaErrors)));
@@ -71,7 +69,6 @@ const FormulaErrorSet = Object.freeze(new Set(Object.values(FormulaErrors)));
  * @returns {boolean}
  */
 function IsFormulaError(value) {
-	return typeof value === "string" && value.startsWith("#");
 	return typeof value === "string" && FormulaErrorSet.has(value);
 }
 
